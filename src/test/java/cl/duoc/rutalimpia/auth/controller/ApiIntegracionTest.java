@@ -30,7 +30,6 @@ import com.jayway.jsonpath.JsonPath;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 
-// recorre las mismas pruebas que la carpeta de auth en Postman, con los usuarios de data.sql
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -208,7 +207,6 @@ class ApiIntegracionTest {
         mockMvc.perform(get("/api/v1/internal/usuarios/2").header("X-Internal-Key", "otra-clave"))
                 .andExpect(status().isForbidden());
 
-        // un JWT valido no reemplaza la clave interna
         mockMvc.perform(get("/api/v1/internal/usuarios/2")
                         .header(HttpHeaders.AUTHORIZATION, bearer("admin@rutalimpia.cl")))
                 .andExpect(status().isForbidden());

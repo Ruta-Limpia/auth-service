@@ -25,7 +25,6 @@ class AuthServiceApplicationTests {
 	void contextLoads() {
 	}
 
-	// el contrato pide fechas ISO y enums como texto en los 4 servicios
 	@Test
 	void jsonUsaFechasIsoYEnumsComoTexto() {
 		String error = jsonMapper.writeValueAsString(

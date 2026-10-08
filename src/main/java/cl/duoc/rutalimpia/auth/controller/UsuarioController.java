@@ -36,7 +36,6 @@ public class UsuarioController {
     @ApiResponse(responseCode = "200", description = "Perfil del usuario")
     @ApiResponse(responseCode = "401", description = "Token ausente o inválido")
     public ResponseEntity<UsuarioResponse> obtenerPerfil(Authentication authentication) {
-        // el id siempre sale del token, nunca del body ni de la URL
         Long usuarioId = (Long) authentication.getPrincipal();
         return ResponseEntity.ok(usuarioService.obtenerPorId(usuarioId));
     }

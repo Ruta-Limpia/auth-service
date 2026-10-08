@@ -20,7 +20,6 @@ public record RegistroRequest(
         @PasswordValida
         String password) {
 
-    // el toString del record imprimiria la clave si alguien loguea el request
     @Override
     public String toString() {
         return "RegistroRequest[nombre=" + nombre + ", email=" + email + ", password=****]";

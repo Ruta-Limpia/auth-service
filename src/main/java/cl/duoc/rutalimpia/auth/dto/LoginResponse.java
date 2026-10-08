@@ -1,6 +1,6 @@
 package cl.duoc.rutalimpia.auth.dto;
 
-// expiraEn va en minutos, igual que JWT_EXPIRATION_MINUTES
+// expiraEn en minutos
 public record LoginResponse(
         String token,
         String tipo,

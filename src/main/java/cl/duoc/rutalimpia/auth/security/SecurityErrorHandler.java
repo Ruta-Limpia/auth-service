@@ -16,8 +16,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import tools.jackson.databind.json.JsonMapper;
 
-// los 401 y 403 que corta Spring Security no pasan por el GlobalExceptionHandler,
-// asi que aca se escriben con el mismo formato de ErrorResponse
+// 401 y 403 de spring security con el mismo formato de error
 @Component
 @RequiredArgsConstructor
 public class SecurityErrorHandler implements AuthenticationEntryPoint, AccessDeniedHandler {

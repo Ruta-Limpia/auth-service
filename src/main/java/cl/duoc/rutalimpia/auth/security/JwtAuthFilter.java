@@ -17,12 +17,10 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
-// si el token no es valido no se corta la peticion: queda sin autenticar y Spring responde 401
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     private static final String PREFIJO = "Bearer ";
 
-    // un token con otro rol (por ejemplo INTERNAL) no se acepta aunque la firma sea correcta
     private static final Set<String> ROLES_VALIDOS = Set.of("VECINO", "CONDUCTOR", "ADMIN");
 
     private final JwtUtil jwtUtil;

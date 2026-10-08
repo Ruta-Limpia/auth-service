@@ -36,7 +36,7 @@ class UsuarioServiceImplTest {
     @Mock
     private UsuarioRepository usuarioRepository;
 
-    // costo 4 para que los tests no se demoren; en la app se usa el default (10)
+    // costo 4 para que los tests sean rapidos
     private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder(4);
 
     private UsuarioServiceImpl usuarioService;

@@ -50,7 +50,7 @@ public class UsuarioServiceImpl implements UsuarioService {
         try {
             usuario = usuarioRepository.saveAndFlush(usuario);
         } catch (DataIntegrityViolationException e) {
-            // dos registros al mismo tiempo con el mismo email: el unique de la tabla frena al segundo
+            // por si llegan dos registros con el mismo email al mismo tiempo
             throw new ReglaNegocioException(EMAIL_DUPLICADO);
         }
 

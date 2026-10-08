@@ -12,6 +12,6 @@ public interface UsuarioService {
 
     UsuarioResponse obtenerPorId(Long id);
 
-    // rol null devuelve todos
+    // si rol es null trae todos
     List<UsuarioResponse> listar(Rol rol);
 }
