@@ -1,0 +1,867 @@
+{
+  "info": {
+    "name": "RutaLimpia",
+    "description": "Pruebas de los microservicios de RutaLimpia",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 auth",
+      "item": [
+        {
+          "name": "Login vecino",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 con token\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"rol VECINO\", () => pm.expect(r.usuario.rol).to.eql(\"VECINO\"));",
+                  "pm.environment.set(\"token_vecino\", r.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/auth/login",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"vecino@rutalimpia.cl\",\n  \"password\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Login conductor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 con token\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"rol CONDUCTOR\", () => pm.expect(r.usuario.rol).to.eql(\"CONDUCTOR\"));",
+                  "pm.environment.set(\"token_conductor\", r.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/auth/login",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"conductor@rutalimpia.cl\",\n  \"password\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Login admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 con token\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"rol ADMIN\", () => pm.expect(r.usuario.rol).to.eql(\"ADMIN\"));",
+                  "pm.environment.set(\"token_admin\", r.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/auth/login",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@rutalimpia.cl\",\n  \"password\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Login con clave incorrecta",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"401 UNAUTHORIZED\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"formato de error\", () => pm.expect(pm.response.json().error).to.eql(\"UNAUTHORIZED\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/auth/login",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"vecino@rutalimpia.cl\",\n  \"password\": \"clave-mala\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Registro de vecino",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set(\"email_registro\", \"vecino.\" + Date.now() + \"@test.cl\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 creado\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"siempre VECINO\", () => pm.expect(pm.response.json().rol).to.eql(\"VECINO\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/auth/registro",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "registro"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Pedro Vecino\",\n  \"email\": \"{{email_registro}}\",\n  \"password\": \"clave-segura\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Registro con email repetido",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"409 CONFLICT\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"formato de error\", () => pm.expect(pm.response.json().error).to.eql(\"CONFLICT\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/auth/registro",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "registro"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Pedro Vecino\",\n  \"email\": \"{{email_registro}}\",\n  \"password\": \"clave-segura\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Perfil del vecino",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"id 3\", () => pm.expect(pm.response.json().id).to.eql(3));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_vecino}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/usuarios/me",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usuarios",
+                "me"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Perfil sin token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"401 UNAUTHORIZED\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"formato de error\", () => pm.expect(pm.response.json().error).to.eql(\"UNAUTHORIZED\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/usuarios/me",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usuarios",
+                "me"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Listar conductores (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"solo conductores\", () => pm.response.json().forEach(u => pm.expect(u.rol).to.eql(\"CONDUCTOR\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_admin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/usuarios?rol=CONDUCTOR",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usuarios"
+              ],
+              "query": [
+                {
+                  "key": "rol",
+                  "value": "CONDUCTOR"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Listar conductores (vecino)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"403 FORBIDDEN\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"formato de error\", () => pm.expect(pm.response.json().error).to.eql(\"FORBIDDEN\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_vecino}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/usuarios?rol=CONDUCTOR",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usuarios"
+              ],
+              "query": [
+                {
+                  "key": "rol",
+                  "value": "CONDUCTOR"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Crear conductor (admin)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set(\"email_conductor\", \"conductor.\" + Date.now() + \"@test.cl\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 creado\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"rol CONDUCTOR\", () => pm.expect(pm.response.json().rol).to.eql(\"CONDUCTOR\"));",
+                  "pm.environment.set(\"conductor_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_admin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/usuarios",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usuarios"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Nuevo Conductor\",\n  \"email\": \"{{email_conductor}}\",\n  \"password\": \"clave-segura\",\n  \"rol\": \"CONDUCTOR\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Obtener conductor por id (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"mismo id\", () => pm.expect(pm.response.json().id).to.eql(Number(pm.environment.get(\"conductor_id\"))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_admin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/usuarios/{{conductor_id}}",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usuarios",
+                "{{conductor_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Actualizar conductor (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"datos actualizados\", () => {",
+                  "    const u = pm.response.json();",
+                  "    pm.expect(u.nombre).to.eql(\"Conductor Editado\");",
+                  "    pm.expect(u.activo).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_admin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/usuarios/{{conductor_id}}",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usuarios",
+                "{{conductor_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Conductor Editado\",\n  \"email\": \"{{email_conductor}}\",\n  \"rol\": \"CONDUCTOR\",\n  \"activo\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Actualizar con token de vecino",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"403 FORBIDDEN\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_vecino}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/usuarios/{{conductor_id}}",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usuarios",
+                "{{conductor_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Otro nombre\",\n  \"email\": \"{{email_conductor}}\",\n  \"rol\": \"ADMIN\",\n  \"activo\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Actualizar con email invalido",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 VALIDATION_ERROR\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"mensaje del campo\", () => pm.expect(pm.response.json().mensaje).to.eql(\"El email no tiene un formato válido\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_admin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/usuarios/{{conductor_id}}",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usuarios",
+                "{{conductor_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Conductor Editado\",\n  \"email\": \"no-es-email\",\n  \"rol\": \"CONDUCTOR\",\n  \"activo\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Eliminar conductor (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"204 sin contenido\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_admin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/usuarios/{{conductor_id}}",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usuarios",
+                "{{conductor_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Obtener conductor eliminado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"404 NOT_FOUND\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"formato de error\", () => pm.expect(pm.response.json().error).to.eql(\"NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_admin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/usuarios/{{conductor_id}}",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usuarios",
+                "{{conductor_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin intenta eliminarse",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"409 CONFLICT\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_admin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/usuarios/1",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usuarios",
+                "1"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Consulta interna con clave",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"conductor 2\", () => pm.expect(pm.response.json().rol).to.eql(\"CONDUCTOR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Internal-Key",
+                "value": "{{internal_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/internal/usuarios/2",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "internal",
+                "usuarios",
+                "2"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Consulta interna sin clave",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"403 FORBIDDEN\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"formato de error\", () => pm.expect(pm.response.json().error).to.eql(\"FORBIDDEN\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_auth}}/api/v1/internal/usuarios/2",
+              "host": [
+                "{{base_auth}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "internal",
+                "usuarios",
+                "2"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
