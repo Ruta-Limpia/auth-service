@@ -221,7 +221,11 @@ class ApiIntegracionTest {
                 .andExpect(jsonPath("$.paths['/api/v1/usuarios/me']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/usuarios']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/internal/usuarios/{id}']").exists())
-                .andExpect(jsonPath("$.components.securitySchemes.bearer").exists());
+                .andExpect(jsonPath("$.components.securitySchemes.bearer").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/usuarios/me'].get.responses['401'].content['*/*'].schema['$ref']")
+                        .value("#/components/schemas/ErrorResponse"))
+                .andExpect(jsonPath("$.paths['/api/v1/usuarios/me'].get.responses['200'].content['*/*'].schema['$ref']")
+                        .value("#/components/schemas/UsuarioResponse"));
     }
 
     @Test

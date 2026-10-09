@@ -15,9 +15,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import cl.duoc.rutalimpia.auth.dto.CrearUsuarioRequest;
 import cl.duoc.rutalimpia.auth.dto.UsuarioResponse;
+import cl.duoc.rutalimpia.auth.exception.ErrorResponse;
 import cl.duoc.rutalimpia.auth.model.enums.Rol;
 import cl.duoc.rutalimpia.auth.service.UsuarioService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -34,7 +37,8 @@ public class UsuarioController {
     @GetMapping("/api/v1/usuarios/me")
     @Operation(summary = "Perfil del usuario dueño del token", security = @SecurityRequirement(name = "bearer"))
     @ApiResponse(responseCode = "200", description = "Perfil del usuario")
-    @ApiResponse(responseCode = "401", description = "Token ausente o inválido")
+    @ApiResponse(responseCode = "401", description = "Token ausente o inválido",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     public ResponseEntity<UsuarioResponse> obtenerPerfil(Authentication authentication) {
         Long usuarioId = (Long) authentication.getPrincipal();
         return ResponseEntity.ok(usuarioService.obtenerPorId(usuarioId));
@@ -42,19 +46,24 @@ public class UsuarioController {
 
     @PostMapping("/api/v1/usuarios")
     @PreAuthorize("hasRole('ADMIN')")
-    @Operation(summary = "Crea un usuario con cualquier rol (conductores)", security = @SecurityRequirement(name = "bearer"))
+    @Operation(summary = "Crea un usuario con cualquier rol (conductores)",
+            security = @SecurityRequirement(name = "bearer"))
     @ApiResponse(responseCode = "201", description = "Usuario creado")
-    @ApiResponse(responseCode = "403", description = "Solo ADMIN")
-    @ApiResponse(responseCode = "409", description = "El email ya está registrado")
+    @ApiResponse(responseCode = "403", description = "Solo ADMIN",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "409", description = "El email ya está registrado",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     public ResponseEntity<UsuarioResponse> crear(@Valid @RequestBody CrearUsuarioRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(usuarioService.crear(request));
     }
 
     @GetMapping("/api/v1/usuarios")
     @PreAuthorize("hasRole('ADMIN')")
-    @Operation(summary = "Lista usuarios, opcionalmente filtrados por rol", security = @SecurityRequirement(name = "bearer"))
+    @Operation(summary = "Lista usuarios, opcionalmente filtrados por rol",
+            security = @SecurityRequirement(name = "bearer"))
     @ApiResponse(responseCode = "200", description = "Listado de usuarios")
-    @ApiResponse(responseCode = "403", description = "Solo ADMIN")
+    @ApiResponse(responseCode = "403", description = "Solo ADMIN",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     public ResponseEntity<List<UsuarioResponse>> listar(@RequestParam(required = false) Rol rol) {
         return ResponseEntity.ok(usuarioService.listar(rol));
     }
@@ -63,8 +72,10 @@ public class UsuarioController {
     @Operation(summary = "Consulta interna entre servicios", description = "No se publica en API Gateway",
             security = @SecurityRequirement(name = "internalKey"))
     @ApiResponse(responseCode = "200", description = "Usuario encontrado")
-    @ApiResponse(responseCode = "403", description = "Clave interna ausente o inválida")
-    @ApiResponse(responseCode = "404", description = "El usuario no existe")
+    @ApiResponse(responseCode = "403", description = "Clave interna ausente o inválida",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "404", description = "El usuario no existe",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     public ResponseEntity<UsuarioResponse> obtenerPorId(@PathVariable Long id) {
         return ResponseEntity.ok(usuarioService.obtenerPorId(id));
     }
