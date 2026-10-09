@@ -2,8 +2,10 @@ package cl.duoc.rutalimpia.auth.controller;
 
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -183,6 +185,80 @@ class ApiIntegracionTest {
         mockMvc.perform(post("/api/v1/usuarios").contentType(MediaType.APPLICATION_JSON).content(body)
                         .header(HttpHeaders.AUTHORIZATION, bearer("conductor@rutalimpia.cl")))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void crudCompletoDeUnConductor() throws Exception {
+        String admin = bearer("admin@rutalimpia.cl");
+        String nuevo = """
+                {"nombre": "Conductor Temporal", "email": "temporal@test.cl", "password": "clave-segura", "rol": "CONDUCTOR"}
+                """;
+        String creado = mockMvc.perform(post("/api/v1/usuarios").contentType(MediaType.APPLICATION_JSON).content(nuevo)
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        Integer id = JsonPath.read(creado, "$.id");
+
+        mockMvc.perform(get("/api/v1/usuarios/" + id).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value("temporal@test.cl"));
+
+        String cambios = """
+                {"nombre": "Conductor Editado", "email": "editado@test.cl", "rol": "CONDUCTOR", "activo": false}
+                """;
+        mockMvc.perform(put("/api/v1/usuarios/" + id).contentType(MediaType.APPLICATION_JSON).content(cambios)
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nombre").value("Conductor Editado"))
+                .andExpect(jsonPath("$.email").value("editado@test.cl"))
+                .andExpect(jsonPath("$.activo").value(false));
+
+        mockMvc.perform(delete("/api/v1/usuarios/" + id).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/v1/usuarios/" + id).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.mensaje").value("Usuario " + id + " no existe"));
+    }
+
+    @Test
+    void usuarioDesactivadoNoPuedeIniciarSesion() throws Exception {
+        String cambios = """
+                {"nombre": "Carlos Conductor", "email": "conductor@rutalimpia.cl", "rol": "CONDUCTOR", "activo": false}
+                """;
+        mockMvc.perform(put("/api/v1/usuarios/2").contentType(MediaType.APPLICATION_JSON).content(cambios)
+                        .header(HttpHeaders.AUTHORIZATION, bearer("admin@rutalimpia.cl")))
+                .andExpect(status().isOk());
+
+        login("conductor@rutalimpia.cl", "123456").andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void soloElAdminActualizaOElimina() throws Exception {
+        String cambios = """
+                {"nombre": "Hackeado", "email": "vecino@rutalimpia.cl", "rol": "ADMIN", "activo": true}
+                """;
+        mockMvc.perform(put("/api/v1/usuarios/3").contentType(MediaType.APPLICATION_JSON).content(cambios)
+                        .header(HttpHeaders.AUTHORIZATION, bearer("vecino@rutalimpia.cl")))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(delete("/api/v1/usuarios/2").header(HttpHeaders.AUTHORIZATION, bearer("conductor@rutalimpia.cl")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void elAdminNoPuedeEliminarseNiUsarUnEmailAjeno() throws Exception {
+        String admin = bearer("admin@rutalimpia.cl");
+        mockMvc.perform(delete("/api/v1/usuarios/1").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.mensaje").value("No puede eliminar su propia cuenta"));
+
+        String emailAjeno = """
+                {"nombre": "Carlos", "email": "vecino@rutalimpia.cl", "rol": "CONDUCTOR", "activo": true}
+                """;
+        mockMvc.perform(put("/api/v1/usuarios/2").contentType(MediaType.APPLICATION_JSON).content(emailAjeno)
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isConflict());
     }
 
     @Test
