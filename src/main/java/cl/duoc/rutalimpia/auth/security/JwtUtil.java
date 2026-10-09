@@ -21,7 +21,6 @@ public class JwtUtil {
 
     private static final int LARGO_MINIMO_SECRETO = 32;
 
-    // tolerancia por si los relojes de los servidores no estan exactamente sincronizados
     private static final long DESFASE_RELOJ_SEGUNDOS = 30;
 
     private final SecretKey key;
@@ -44,7 +43,7 @@ public class JwtUtil {
         this.expiracionMinutos = expiracionMinutos;
     }
 
-    // solo lo usa auth-service, en los demas servicios este metodo se puede quitar
+    // solo se usa en auth-service
     public String generarToken(Long id, String email, String rol) {
         Instant ahora = Instant.now();
         return Jwts.builder()
@@ -53,7 +52,7 @@ public class JwtUtil {
                 .claim("rol", rol)
                 .issuedAt(Date.from(ahora))
                 .expiration(Date.from(ahora.plus(expiracionMinutos, ChronoUnit.MINUTES)))
-                // se fija HS256 a mano: con un secreto de 48 bytes o mas jjwt elegiria HS384/HS512
+                // HS256 fijo, con secretos largos jjwt usa HS384
                 .signWith(key, Jwts.SIG.HS256)
                 .compact();
     }
@@ -61,7 +60,6 @@ public class JwtUtil {
     public boolean esValido(String token) {
         try {
             Claims claims = leerClaims(token);
-            // ademas de la firma se exige que sub sea numerico y que venga el rol
             Long.parseLong(claims.getSubject());
             return claims.get("rol", String.class) != null;
         } catch (JwtException | IllegalArgumentException e) {

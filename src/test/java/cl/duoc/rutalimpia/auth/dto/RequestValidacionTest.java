@@ -55,7 +55,6 @@ class RequestValidacionTest {
 
     @Test
     void registroRechazaNombreYEmailMasLargosQueLaColumna() {
-        // 155 caracteres, con partes de largo valido para que solo falle el @Size
         String email = "a".repeat(60) + "@" + "b".repeat(60) + "." + "c".repeat(30) + ".cl";
         Set<String> mensajes = mensajes(validator.validate(new RegistroRequest("n".repeat(121), email, "clave1234")));
 
@@ -74,7 +73,7 @@ class RequestValidacionTest {
     void passwordNoPuedeSuperar72Bytes() {
         assertThat(validator.validate(new RegistroRequest("Ana", "ana@test.cl", "a".repeat(72)))).isEmpty();
         assertThat(validator.validate(new RegistroRequest("Ana", "ana@test.cl", "a".repeat(73)))).hasSize(1);
-        // 40 letras ñ son 80 bytes en UTF-8
+        // 40 ñ = 80 bytes
         assertThat(validator.validate(new RegistroRequest("Ana", "ana@test.cl", "ñ".repeat(40)))).hasSize(1);
     }
 

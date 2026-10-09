@@ -40,11 +40,10 @@ public class Usuario {
     @Column(nullable = false, length = 150)
     private String email;
 
-    // hash BCrypt, nunca se expone en las respuestas
     @Column(name = "password_hash", nullable = false, length = 100)
     private String passwordHash;
 
-    // VARCHAR(20) como en el SQL acordado; sin esto Hibernate crea un ENUM de MySQL
+    // sin el columnDefinition hibernate lo crea como ENUM en mysql
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20, columnDefinition = "VARCHAR(20)")
     private Rol rol;

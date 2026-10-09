@@ -9,7 +9,6 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 
-// agrega el boton Authorize en Swagger para probar con el token o la clave interna
 @Configuration
 public class OpenApiConfig {
 

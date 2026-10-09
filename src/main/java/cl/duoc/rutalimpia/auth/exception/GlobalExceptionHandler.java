@@ -36,7 +36,6 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> manejarValidacion(MethodArgumentNotValidException ex,
             HttpServletRequest request) {
-        // se ordena por campo para que, con varios errores, siempre salga el mismo mensaje
         String mensaje = ex.getBindingResult().getFieldErrors().stream()
                 .sorted(Comparator.comparing(FieldError::getField))
                 .map(FieldError::getDefaultMessage)
@@ -48,7 +47,6 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> manejarJsonInvalido(HttpMessageNotReadableException ex,
             HttpServletRequest request) {
-        // no se devuelve el mensaje de Jackson porque expone nombres de clases internas
         String mensaje = "El cuerpo de la solicitud no es un JSON válido";
         if (ex.getCause() instanceof JacksonException jackson && !jackson.getPath().isEmpty()) {
             String campo = jackson.getPath().getLast().getPropertyName();
@@ -82,8 +80,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> manejarGeneral(Exception ex, HttpServletRequest request) {
-        // las excepciones propias de Spring MVC (ruta inexistente, metodo no permitido,
-        // parametro faltante, etc.) ya traen su codigo; no deben terminar en 500
+        // 404, 405, 415 de spring mvc, para que no salgan como 500
         if (ex instanceof org.springframework.web.ErrorResponse errorSpring) {
             HttpStatus status = HttpStatus.resolve(errorSpring.getStatusCode().value());
             if (status != null && status.is4xxClientError()) {

@@ -18,7 +18,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 
-// protege /api/v1/internal/**, que solo usan los otros servicios y la Lambda
 @Slf4j
 public class InternalKeyFilter extends OncePerRequestFilter {
 
@@ -47,7 +46,6 @@ public class InternalKeyFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String recibida = request.getHeader(HEADER);
 
-        // MessageDigest.isEqual compara en tiempo constante, no se puede adivinar la clave por tiempos
         if (recibida == null || !MessageDigest.isEqual(recibida.getBytes(StandardCharsets.UTF_8), claveInterna)) {
             log.warn("Llamada interna rechazada: {} {}", request.getMethod(), request.getRequestURI());
             errores.escribir(request, response, HttpStatus.FORBIDDEN, "FORBIDDEN", "Clave interna ausente o inválida");

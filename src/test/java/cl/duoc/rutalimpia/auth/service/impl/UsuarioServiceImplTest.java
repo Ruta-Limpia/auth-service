@@ -21,6 +21,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import cl.duoc.rutalimpia.auth.dto.ActualizarUsuarioRequest;
 import cl.duoc.rutalimpia.auth.dto.CrearUsuarioRequest;
 import cl.duoc.rutalimpia.auth.dto.UsuarioResponse;
 import cl.duoc.rutalimpia.auth.exception.RecursoNoEncontradoException;
@@ -36,7 +37,7 @@ class UsuarioServiceImplTest {
     @Mock
     private UsuarioRepository usuarioRepository;
 
-    // costo 4 para que los tests no se demoren; en la app se usa el default (10)
+    // costo 4 para que los tests sean rapidos
     private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder(4);
 
     private UsuarioServiceImpl usuarioService;
@@ -130,6 +131,79 @@ class UsuarioServiceImplTest {
                 .extracting(UsuarioResponse::rol)
                 .isEqualTo(Rol.CONDUCTOR);
         verify(usuarioRepository, never()).findAll(any(Sort.class));
+    }
+
+    @Test
+    void actualizaLosDatosDelUsuario() {
+        Usuario existente = usuario(2L, "conductor@rutalimpia.cl", Rol.CONDUCTOR);
+        when(usuarioRepository.findById(2L)).thenReturn(Optional.of(existente));
+        when(usuarioRepository.existsByEmailAndIdNot("carlos@rutalimpia.cl", 2L)).thenReturn(false);
+        when(usuarioRepository.saveAndFlush(existente)).thenReturn(existente);
+
+        UsuarioResponse respuesta = usuarioService.actualizar(2L,
+                new ActualizarUsuarioRequest(" Carlos P. ", "Carlos@RutaLimpia.cl", Rol.CONDUCTOR, false), 1L);
+
+        assertThat(respuesta).isEqualTo(
+                new UsuarioResponse(2L, "Carlos P.", "carlos@rutalimpia.cl", Rol.CONDUCTOR, false));
+    }
+
+    @Test
+    void actualizarConEmailDeOtroUsuarioDa409() {
+        when(usuarioRepository.findById(2L)).thenReturn(Optional.of(usuario(2L, "conductor@rutalimpia.cl", Rol.CONDUCTOR)));
+        when(usuarioRepository.existsByEmailAndIdNot("vecino@rutalimpia.cl", 2L)).thenReturn(true);
+
+        assertThatThrownBy(() -> usuarioService.actualizar(2L,
+                new ActualizarUsuarioRequest("Carlos", "vecino@rutalimpia.cl", Rol.CONDUCTOR, true), 1L))
+                .isInstanceOf(ReglaNegocioException.class)
+                .hasMessage("El email ya está registrado");
+        verify(usuarioRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void elAdminNoPuedeQuitarseSuRolNiDesactivarse() {
+        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario(1L, "admin@rutalimpia.cl", Rol.ADMIN)));
+
+        assertThatThrownBy(() -> usuarioService.actualizar(1L,
+                new ActualizarUsuarioRequest("Admin", "admin@rutalimpia.cl", Rol.VECINO, true), 1L))
+                .isInstanceOf(ReglaNegocioException.class);
+        assertThatThrownBy(() -> usuarioService.actualizar(1L,
+                new ActualizarUsuarioRequest("Admin", "admin@rutalimpia.cl", Rol.ADMIN, false), 1L))
+                .isInstanceOf(ReglaNegocioException.class);
+    }
+
+    @Test
+    void actualizarUsuarioInexistenteDa404() {
+        when(usuarioRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> usuarioService.actualizar(99L,
+                new ActualizarUsuarioRequest("X", "x@test.cl", Rol.VECINO, true), 1L))
+                .isInstanceOf(RecursoNoEncontradoException.class);
+    }
+
+    @Test
+    void eliminaUnUsuario() {
+        Usuario existente = usuario(3L, "vecino@rutalimpia.cl", Rol.VECINO);
+        when(usuarioRepository.findById(3L)).thenReturn(Optional.of(existente));
+
+        usuarioService.eliminar(3L, 1L);
+
+        verify(usuarioRepository).delete(existente);
+    }
+
+    @Test
+    void elAdminNoPuedeEliminarse() {
+        assertThatThrownBy(() -> usuarioService.eliminar(1L, 1L))
+                .isInstanceOf(ReglaNegocioException.class)
+                .hasMessage("No puede eliminar su propia cuenta");
+        verify(usuarioRepository, never()).delete(any());
+    }
+
+    @Test
+    void eliminarUsuarioInexistenteDa404() {
+        when(usuarioRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> usuarioService.eliminar(99L, 1L))
+                .isInstanceOf(RecursoNoEncontradoException.class);
     }
 
     private Usuario usuario(Long id, String email, Rol rol) {

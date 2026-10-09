@@ -107,7 +107,7 @@
 					</annotationProcessorPaths>
 				</configuration>
 			</plugin>
-			<!-- Mockito se carga como agente desde el inicio; Java 25 advierte si se adjunta en caliente -->
+			<!-- mockito como agente, para evitar el warning de java 25 -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-dependency-plugin</artifactId>

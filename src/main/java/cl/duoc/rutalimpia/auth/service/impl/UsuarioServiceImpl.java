@@ -9,6 +9,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import cl.duoc.rutalimpia.auth.dto.ActualizarUsuarioRequest;
 import cl.duoc.rutalimpia.auth.dto.CrearUsuarioRequest;
 import cl.duoc.rutalimpia.auth.dto.UsuarioResponse;
 import cl.duoc.rutalimpia.auth.exception.RecursoNoEncontradoException;
@@ -50,7 +51,7 @@ public class UsuarioServiceImpl implements UsuarioService {
         try {
             usuario = usuarioRepository.saveAndFlush(usuario);
         } catch (DataIntegrityViolationException e) {
-            // dos registros al mismo tiempo con el mismo email: el unique de la tabla frena al segundo
+            // por si llegan dos registros con el mismo email al mismo tiempo
             throw new ReglaNegocioException(EMAIL_DUPLICADO);
         }
 
@@ -61,9 +62,7 @@ public class UsuarioServiceImpl implements UsuarioService {
     @Override
     @Transactional(readOnly = true)
     public UsuarioResponse obtenerPorId(Long id) {
-        return usuarioRepository.findById(id)
-                .map(usuarioMapper::toResponse)
-                .orElseThrow(() -> new RecursoNoEncontradoException("Usuario " + id + " no existe"));
+        return usuarioMapper.toResponse(buscar(id));
     }
 
     @Override
@@ -75,6 +74,49 @@ public class UsuarioServiceImpl implements UsuarioService {
         return usuarios.stream()
                 .map(usuarioMapper::toResponse)
                 .toList();
+    }
+
+    @Override
+    @Transactional
+    public UsuarioResponse actualizar(Long id, ActualizarUsuarioRequest request, Long adminId) {
+        Usuario usuario = buscar(id);
+        String email = normalizarEmail(request.email());
+
+        if (id.equals(adminId) && (request.rol() != Rol.ADMIN || !request.activo())) {
+            throw new ReglaNegocioException("No puede quitarse el rol ADMIN ni desactivar su propia cuenta");
+        }
+        if (usuarioRepository.existsByEmailAndIdNot(email, id)) {
+            throw new ReglaNegocioException(EMAIL_DUPLICADO);
+        }
+
+        usuario.setNombre(request.nombre().trim());
+        usuario.setEmail(email);
+        usuario.setRol(request.rol());
+        usuario.setActivo(request.activo());
+
+        try {
+            usuario = usuarioRepository.saveAndFlush(usuario);
+        } catch (DataIntegrityViolationException e) {
+            throw new ReglaNegocioException(EMAIL_DUPLICADO);
+        }
+
+        log.info("Usuario {} actualizado por el admin {}", id, adminId);
+        return usuarioMapper.toResponse(usuario);
+    }
+
+    @Override
+    @Transactional
+    public void eliminar(Long id, Long adminId) {
+        if (id.equals(adminId)) {
+            throw new ReglaNegocioException("No puede eliminar su propia cuenta");
+        }
+        usuarioRepository.delete(buscar(id));
+        log.info("Usuario {} eliminado por el admin {}", id, adminId);
+    }
+
+    private Usuario buscar(Long id) {
+        return usuarioRepository.findById(id)
+                .orElseThrow(() -> new RecursoNoEncontradoException("Usuario " + id + " no existe"));
     }
 
     private static String normalizarEmail(String email) {
