@@ -29,8 +29,7 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    // los filtros se crean aca y no como @Component: si fueran beans, Spring Boot
-    // los registraria tambien fuera de la cadena de seguridad y se ejecutarian dos veces
+    // filtros sin @Component, si no spring los registra dos veces
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtUtil jwtUtil,
             SecurityErrorHandler errores, @Value("${app.internal.key}") String claveInterna) throws Exception {

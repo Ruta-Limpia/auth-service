@@ -20,7 +20,6 @@ import io.jsonwebtoken.security.Keys;
 
 class JwtUtilTest {
 
-    // mismo secreto de desarrollo que usan los 4 servicios
     private static final String SECRETO = "rutalimpia-secreto-super-largo-de-32-chars-minimo";
 
     private final JwtUtil jwtUtil = new JwtUtil(SECRETO, 60);
@@ -29,7 +28,6 @@ class JwtUtilTest {
     void generaTokenConLosClaimsDelContrato() {
         String token = jwtUtil.generarToken(3L, "vecino@rutalimpia.cl", "VECINO");
 
-        // se lee igual que lo hara cualquiera de los otros servicios
         SecretKey key = Keys.hmacShaKeyFor(SECRETO.getBytes(StandardCharsets.UTF_8));
         Jws<Claims> jws = Jwts.parser().verifyWith(key).build().parseSignedClaims(token);
         Claims claims = jws.getPayload();

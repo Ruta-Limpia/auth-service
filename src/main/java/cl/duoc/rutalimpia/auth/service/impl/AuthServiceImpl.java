@@ -33,8 +33,7 @@ public class AuthServiceImpl implements AuthService {
     private final JwtUtil jwtUtil;
     private final UsuarioMapper usuarioMapper;
 
-    // se compara contra este hash cuando el email no existe, asi la respuesta tarda
-    // lo mismo que con una clave incorrecta y no se puede adivinar que emails estan registrados
+    // para que un email que no existe demore lo mismo que una clave mala
     private final String hashReferencia;
 
     public AuthServiceImpl(UsuarioRepository usuarioRepository, UsuarioService usuarioService,
@@ -49,7 +48,6 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public UsuarioResponse registrar(RegistroRequest request) {
-        // el registro publico siempre crea vecinos; el rol nunca se toma del cliente
         return usuarioService.crear(new CrearUsuarioRequest(
                 request.nombre(), request.email(), request.password(), Rol.VECINO));
     }
@@ -77,7 +75,6 @@ public class AuthServiceImpl implements AuthService {
         return LoginResponse.bearer(token, jwtUtil.getExpiracionMinutos(), usuarioMapper.toResponse(usuario));
     }
 
-    // mismo mensaje para email inexistente, clave mala o cuenta desactivada
     private BadCredentialsException credencialesInvalidas() {
         return new BadCredentialsException("Email o contraseña incorrectos");
     }

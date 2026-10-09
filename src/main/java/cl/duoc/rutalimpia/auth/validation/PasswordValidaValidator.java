@@ -9,14 +9,13 @@ public class PasswordValidaValidator implements ConstraintValidator<PasswordVali
 
     static final int MIN_CARACTERES = 8;
 
-    // BCrypt no acepta mas de 72 bytes; una clave con muchas tildes o ñ los supera
-    // antes de llegar a 72 caracteres y Spring Security lanza excepcion al hashearla
+    // bcrypt no acepta mas de 72 bytes (ojo con tildes y ñ)
     static final int MAX_BYTES = 72;
 
     @Override
     public boolean isValid(String password, ConstraintValidatorContext context) {
         if (password == null) {
-            return true; // eso lo valida @NotBlank
+            return true;
         }
         return password.codePointCount(0, password.length()) >= MIN_CARACTERES
                 && password.getBytes(StandardCharsets.UTF_8).length <= MAX_BYTES;
