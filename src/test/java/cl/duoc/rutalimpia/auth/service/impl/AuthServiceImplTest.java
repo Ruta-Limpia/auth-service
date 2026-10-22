@@ -3,7 +3,10 @@ package cl.duoc.rutalimpia.auth.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
@@ -25,21 +28,27 @@ import cl.duoc.rutalimpia.auth.dto.RegistroRequest;
 import cl.duoc.rutalimpia.auth.dto.UsuarioResponse;
 import cl.duoc.rutalimpia.auth.mapper.UsuarioMapper;
 import cl.duoc.rutalimpia.auth.model.Usuario;
+import cl.duoc.rutalimpia.auth.model.enums.ResultadoAcceso;
 import cl.duoc.rutalimpia.auth.model.enums.Rol;
 import cl.duoc.rutalimpia.auth.repository.UsuarioRepository;
 import cl.duoc.rutalimpia.auth.security.JwtUtil;
+import cl.duoc.rutalimpia.auth.service.RegistroAccesoService;
 import cl.duoc.rutalimpia.auth.service.UsuarioService;
 
 @ExtendWith(MockitoExtension.class)
 class AuthServiceImplTest {
 
     private static final String CLAVE = "123456";
+    private static final String IP = "10.0.0.5";
 
     @Mock
     private UsuarioRepository usuarioRepository;
 
     @Mock
     private UsuarioService usuarioService;
+
+    @Mock
+    private RegistroAccesoService registroAccesoService;
 
     private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder(4);
     private final JwtUtil jwtUtil = new JwtUtil("rutalimpia-secreto-super-largo-de-32-chars-minimo", 60);
@@ -49,7 +58,7 @@ class AuthServiceImplTest {
     @BeforeEach
     void configurar() {
         authService = new AuthServiceImpl(usuarioRepository, usuarioService, passwordEncoder, jwtUtil,
-                new UsuarioMapper());
+                new UsuarioMapper(), registroAccesoService);
     }
 
     @Test
@@ -70,7 +79,7 @@ class AuthServiceImplTest {
         when(usuarioRepository.findByEmail("vecino@rutalimpia.cl"))
                 .thenReturn(Optional.of(usuario(3L, "vecino@rutalimpia.cl", Rol.VECINO, true)));
 
-        LoginResponse respuesta = authService.login(new LoginRequest("vecino@rutalimpia.cl", CLAVE));
+        LoginResponse respuesta = authService.login(new LoginRequest("vecino@rutalimpia.cl", CLAVE), IP);
 
         assertThat(respuesta.tipo()).isEqualTo("Bearer");
         assertThat(respuesta.expiraEn()).isEqualTo(60);
@@ -78,6 +87,7 @@ class AuthServiceImplTest {
         assertThat(jwtUtil.esValido(respuesta.token())).isTrue();
         assertThat(jwtUtil.obtenerUsuarioId(respuesta.token())).isEqualTo(3L);
         assertThat(jwtUtil.obtenerRol(respuesta.token())).isEqualTo("VECINO");
+        verify(registroAccesoService).registrar(argThat(u -> u.getId().equals(3L)), eq(ResultadoAcceso.EXITOSO), eq(IP));
     }
 
     @Test
@@ -85,7 +95,7 @@ class AuthServiceImplTest {
         when(usuarioRepository.findByEmail("vecino@rutalimpia.cl"))
                 .thenReturn(Optional.of(usuario(3L, "vecino@rutalimpia.cl", Rol.VECINO, true)));
 
-        LoginResponse respuesta = authService.login(new LoginRequest("  Vecino@RutaLimpia.cl ", CLAVE));
+        LoginResponse respuesta = authService.login(new LoginRequest("  Vecino@RutaLimpia.cl ", CLAVE), IP);
 
         assertThat(respuesta.usuario().email()).isEqualTo("vecino@rutalimpia.cl");
     }
@@ -95,18 +105,20 @@ class AuthServiceImplTest {
         when(usuarioRepository.findByEmail("vecino@rutalimpia.cl"))
                 .thenReturn(Optional.of(usuario(3L, "vecino@rutalimpia.cl", Rol.VECINO, true)));
 
-        assertThatThrownBy(() -> authService.login(new LoginRequest("vecino@rutalimpia.cl", "otra-clave")))
+        assertThatThrownBy(() -> authService.login(new LoginRequest("vecino@rutalimpia.cl", "otra-clave"), IP))
                 .isInstanceOf(BadCredentialsException.class)
                 .hasMessage("Email o contraseña incorrectos");
+        verify(registroAccesoService).registrar(any(Usuario.class), eq(ResultadoAcceso.CLAVE_INCORRECTA), eq(IP));
     }
 
     @Test
     void loginConEmailInexistenteDaElMismoError() {
         when(usuarioRepository.findByEmail("nadie@rutalimpia.cl")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> authService.login(new LoginRequest("nadie@rutalimpia.cl", CLAVE)))
+        assertThatThrownBy(() -> authService.login(new LoginRequest("nadie@rutalimpia.cl", CLAVE), IP))
                 .isInstanceOf(BadCredentialsException.class)
                 .hasMessage("Email o contraseña incorrectos");
+        verifyNoInteractions(registroAccesoService);
     }
 
     @Test
@@ -114,9 +126,20 @@ class AuthServiceImplTest {
         when(usuarioRepository.findByEmail("conductor@rutalimpia.cl"))
                 .thenReturn(Optional.of(usuario(2L, "conductor@rutalimpia.cl", Rol.CONDUCTOR, false)));
 
-        assertThatThrownBy(() -> authService.login(new LoginRequest("conductor@rutalimpia.cl", CLAVE)))
+        assertThatThrownBy(() -> authService.login(new LoginRequest("conductor@rutalimpia.cl", CLAVE), IP))
                 .isInstanceOf(BadCredentialsException.class)
                 .hasMessage("Email o contraseña incorrectos");
+        verify(registroAccesoService).registrar(any(Usuario.class), eq(ResultadoAcceso.CUENTA_INACTIVA), eq(IP));
+    }
+
+    @Test
+    void cuentaInactivaConClaveMalaSeRegistraComoClaveIncorrecta() {
+        when(usuarioRepository.findByEmail("conductor@rutalimpia.cl"))
+                .thenReturn(Optional.of(usuario(2L, "conductor@rutalimpia.cl", Rol.CONDUCTOR, false)));
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest("conductor@rutalimpia.cl", "otra-clave"), IP))
+                .isInstanceOf(BadCredentialsException.class);
+        verify(registroAccesoService).registrar(any(Usuario.class), eq(ResultadoAcceso.CLAVE_INCORRECTA), eq(IP));
     }
 
     private Usuario usuario(Long id, String email, Rol rol, boolean activo) {
