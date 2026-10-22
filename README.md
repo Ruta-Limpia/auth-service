@@ -22,7 +22,7 @@ Microservicio de usuarios y login de **RutaLimpia**. Se encarga de registrar usu
 controller   recibe las peticiones
 service      lógica del registro, login y usuarios
 repository   acceso a la base de datos
-model        la entidad Usuario y el enum Rol
+model        las entidades Usuario y RegistroAcceso, y los enums
 dto          datos que entran y salen de la API
 security     token y filtros de seguridad
 exception    manejo de errores
@@ -47,7 +47,7 @@ docker run -d --name rl-mysql -p 3306:3306 -e MYSQL_ROOT_PASSWORD=root mysql:8
 
 Solo se hace la primera vez. Después basta con `docker start rl-mysql`.
 
-No hay que crear nada en la base: cuando el servicio arranca, crea la base `rl_auth`, la tabla `usuarios` y carga tres usuarios de prueba.
+No hay que crear nada en la base: cuando el servicio arranca, crea la base `rl_auth`, las tablas `usuarios` y `registros_acceso` y carga tres usuarios de prueba.
 
 ### 3. Compilar con Maven
 
@@ -113,9 +113,18 @@ Todos tienen la clave `123456`.
 | GET    | `/api/v1/usuarios/{id}`          | ADMIN               |
 | PUT    | `/api/v1/usuarios/{id}`          | ADMIN               |
 | DELETE | `/api/v1/usuarios/{id}`          | ADMIN               |
+| GET    | `/api/v1/usuarios/{id}/accesos`  | ADMIN               |
 | GET    | `/api/v1/internal/usuarios/{id}` | otros servicios     |
 
 Para las rutas con token se agrega el header `Authorization: Bearer <token>`. La ruta interna usa el header `X-Internal-Key`.
+
+## Historial de accesos
+
+Cada intento de login de un usuario registrado queda guardado en la tabla `registros_acceso`, con el resultado (`EXITOSO`, `CLAVE_INCORRECTA` o `CUENTA_INACTIVA`), la IP y la fecha. Los intentos fallidos también se guardan, aunque la respuesta sea 401.
+
+Es una relación uno a muchos: un `Usuario` tiene muchos `RegistroAcceso` (`@OneToMany` en `Usuario` y `@ManyToOne` en `RegistroAcceso`). La llave foránea tiene `ON DELETE CASCADE`, así que al eliminar un usuario la base borra su historial.
+
+El admin ve los últimos 20 intentos con `GET /api/v1/usuarios/{id}/accesos`.
 
 Cuando algo falla, la respuesta siempre trae el mismo formato:
 
