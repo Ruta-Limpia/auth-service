@@ -9,5 +9,5 @@ public interface AuthService {
 
     UsuarioResponse registrar(RegistroRequest request);
 
-    LoginResponse login(LoginRequest request);
+    LoginResponse login(LoginRequest request, String ip);
 }

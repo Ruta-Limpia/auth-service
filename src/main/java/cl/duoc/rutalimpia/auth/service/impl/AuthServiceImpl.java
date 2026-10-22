@@ -16,10 +16,12 @@ import cl.duoc.rutalimpia.auth.dto.RegistroRequest;
 import cl.duoc.rutalimpia.auth.dto.UsuarioResponse;
 import cl.duoc.rutalimpia.auth.mapper.UsuarioMapper;
 import cl.duoc.rutalimpia.auth.model.Usuario;
+import cl.duoc.rutalimpia.auth.model.enums.ResultadoAcceso;
 import cl.duoc.rutalimpia.auth.model.enums.Rol;
 import cl.duoc.rutalimpia.auth.repository.UsuarioRepository;
 import cl.duoc.rutalimpia.auth.security.JwtUtil;
 import cl.duoc.rutalimpia.auth.service.AuthService;
+import cl.duoc.rutalimpia.auth.service.RegistroAccesoService;
 import cl.duoc.rutalimpia.auth.service.UsuarioService;
 import lombok.extern.slf4j.Slf4j;
 
@@ -32,17 +34,20 @@ public class AuthServiceImpl implements AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final UsuarioMapper usuarioMapper;
+    private final RegistroAccesoService registroAccesoService;
 
     // para que un email que no existe demore lo mismo que una clave mala
     private final String hashReferencia;
 
     public AuthServiceImpl(UsuarioRepository usuarioRepository, UsuarioService usuarioService,
-            PasswordEncoder passwordEncoder, JwtUtil jwtUtil, UsuarioMapper usuarioMapper) {
+            PasswordEncoder passwordEncoder, JwtUtil jwtUtil, UsuarioMapper usuarioMapper,
+            RegistroAccesoService registroAccesoService) {
         this.usuarioRepository = usuarioRepository;
         this.usuarioService = usuarioService;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
         this.usuarioMapper = usuarioMapper;
+        this.registroAccesoService = registroAccesoService;
         this.hashReferencia = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
@@ -52,9 +57,10 @@ public class AuthServiceImpl implements AuthService {
                 request.nombre(), request.email(), request.password(), Rol.VECINO));
     }
 
+    // sin rollback en el 401, si no el intento fallido no quedaria guardado
     @Override
-    @Transactional(readOnly = true)
-    public LoginResponse login(LoginRequest request) {
+    @Transactional(noRollbackFor = BadCredentialsException.class)
+    public LoginResponse login(LoginRequest request, String ip) {
         String email = request.email().trim().toLowerCase(Locale.ROOT);
         Optional<Usuario> encontrado = usuarioRepository.findByEmail(email);
 
@@ -67,9 +73,13 @@ public class AuthServiceImpl implements AuthService {
         Usuario usuario = encontrado.get();
         boolean passwordCorrecta = passwordEncoder.matches(request.password(), usuario.getPasswordHash());
         if (!passwordCorrecta || !usuario.isActivo()) {
+            registroAccesoService.registrar(usuario,
+                    passwordCorrecta ? ResultadoAcceso.CUENTA_INACTIVA : ResultadoAcceso.CLAVE_INCORRECTA, ip);
             log.warn("Login rechazado para usuario {}", usuario.getId());
             throw credencialesInvalidas();
         }
+
+        registroAccesoService.registrar(usuario, ResultadoAcceso.EXITOSO, ip);
 
         String token = jwtUtil.generarToken(usuario.getId(), usuario.getEmail(), usuario.getRol().name());
         return LoginResponse.bearer(token, jwtUtil.getExpiracionMinutos(), usuarioMapper.toResponse(usuario));
