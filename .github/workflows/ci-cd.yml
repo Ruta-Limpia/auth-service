@@ -90,13 +90,14 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: produccion
-      url: http://${{ vars.EC2_HOST }}:8081/actuator/health
+      url: ${{ steps.instancia.outputs.url }}
     concurrency:
       group: deploy-produccion
       cancel-in-progress: false
     env:
-      EC2_HOST: ${{ vars.EC2_HOST }}
-      EC2_USER: ${{ vars.EC2_USER || 'ubuntu' }}
+      AWS_REGION: us-east-1
+      INSTANCIA: ${{ vars.EC2_INSTANCE_NAME || 'auth-service' }}
+      EC2_USER: ubuntu
     steps:
       - uses: actions/checkout@v7
 
@@ -106,58 +107,75 @@ jobs:
           name: auth-service-jar
           path: target
 
-      - name: Revisar configuracion del ambiente
-        env:
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+      - name: Configurar credenciales temporales de AWS Academy
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Buscar la EC2
+        id: instancia
         run: |
-          faltan=""
-          for nombre in EC2_HOST EC2_SSH_KEY DB_PASSWORD JWT_SECRET INTERNAL_API_KEY; do
-              [ -n "${!nombre}" ] || faltan="$faltan $nombre"
-          done
-          if [ -n "$faltan" ]; then
-              echo "::error::Faltan en el environment 'produccion':$faltan (ver docs/despliegue-aws.md)"
+          datos=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=$INSTANCIA" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[] | [0].[InstanceId, PublicIpAddress]' --output text)
+          read -r id ip <<< "$datos"
+          if [ -z "$id" ] || [ "$id" = "None" ] || [ -z "$ip" ] || [ "$ip" = "None" ]; then
+              echo "::error::No hay una EC2 corriendo con el nombre '$INSTANCIA' y una IP publica (revisa que el Learner Lab este encendido)"
               exit 1
           fi
+          echo "EC2 $id en $ip"
+          echo "EC2_ID=$id" >> "$GITHUB_ENV"
+          echo "EC2_HOST=$ip" >> "$GITHUB_ENV"
+          echo "url=http://$ip:8081/actuator/health" >> "$GITHUB_OUTPUT"
 
-      - name: Llave SSH
-        env:
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+      # llave SSH de un solo uso: EC2 Instance Connect la acepta por 60 segundos,
+      # y la conexion maestra queda abierta para el resto de los pasos
+      - name: Conectar con EC2 Instance Connect
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/ec2.pem
-          chmod 600 ~/.ssh/ec2.pem
+          ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/deploy
           cat > ~/.ssh/config <<EOF
           Host ec2
             HostName $EC2_HOST
             User $EC2_USER
-            IdentityFile ~/.ssh/ec2.pem
+            IdentityFile ~/.ssh/deploy
             StrictHostKeyChecking accept-new
             ConnectTimeout 20
+            ControlMaster auto
+            ControlPath ~/.ssh/cm-%C
+            ControlPersist 15m
           EOF
+          aws ec2-instance-connect send-ssh-public-key \
+            --instance-id "$EC2_ID" --instance-os-user "$EC2_USER" \
+            --ssh-public-key file://$HOME/.ssh/deploy.pub > /dev/null
+          ssh -fN ec2
+          ssh ec2 'echo "conectado a $(hostname)"'
 
-      - name: Armar el .env de produccion
+      # las claves de MySQL y JWT se crean en la EC2 la primera vez y se mantienen
+      - name: Preparar la EC2
         env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
           SEED_DATA: ${{ vars.SEED_DATA || 'never' }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
-          umask 077
-          {
-              echo "DB_PASSWORD=$DB_PASSWORD"
-              echo "JWT_SECRET=$JWT_SECRET"
-              echo "INTERNAL_API_KEY=$INTERNAL_API_KEY"
-              echo "SEED_DATA=$SEED_DATA"
-          } > .env
+          ssh ec2 'rm -rf auth-service/target && mkdir -p auth-service/target auth-service/deploy'
+          ssh ec2 'cd auth-service && if [ ! -f .env ]; then
+              umask 077
+              printf "DB_PASSWORD=%s\nJWT_SECRET=%s\nINTERNAL_API_KEY=%s\nSEED_DATA=never\n" \
+                "$(openssl rand -hex 16)" "$(openssl rand -hex 32)" "$(openssl rand -hex 16)" > .env
+              echo ".env creado"
+          fi'
+          ssh ec2 "sed -i 's/^SEED_DATA=.*/SEED_DATA=$SEED_DATA/' auth-service/.env"
+          if [ -n "$JWT_SECRET" ]; then
+              printf '%s' "$JWT_SECRET" | ssh ec2 'v=$(cat); sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$v/" auth-service/.env'
+          fi
 
       - name: Copiar archivos a la EC2
         run: |
-          ssh ec2 'rm -rf auth-service/target && mkdir -p auth-service/target auth-service/deploy'
           scp target/auth-service-*.jar ec2:auth-service/target/
-          scp Dockerfile .dockerignore docker-compose.yml .env ec2:auth-service/
+          scp Dockerfile .dockerignore docker-compose.yml ec2:auth-service/
           scp deploy/desplegar.sh ec2:auth-service/deploy/
 
       - name: Desplegar
@@ -166,6 +184,8 @@ jobs:
       - name: Verificar desde internet
         run: curl -fsS --retry 10 --retry-delay 5 --retry-all-errors "http://$EC2_HOST:8081/actuator/health"
 
-      - name: Borrar la llave del runner
+      - name: Cerrar la conexion
         if: always()
-        run: rm -f ~/.ssh/ec2.pem ~/.ssh/config .env
+        run: |
+          ssh -O exit ec2 2> /dev/null || true
+          rm -f ~/.ssh/deploy ~/.ssh/deploy.pub ~/.ssh/config
