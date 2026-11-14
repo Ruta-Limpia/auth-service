@@ -1,0 +1,41 @@
+# auth-service + MySQL
+# Local:  ./mvnw clean package  y luego  docker compose up -d --build
+# En la EC2 lo levanta el pipeline con deploy/desplegar.sh
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root}
+      MYSQL_DATABASE: rl_auth
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  auth-service:
+    build: .
+    image: auth-service:local
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/rl_auth?createDatabaseIfNotExist=true&serverTimezone=America/Santiago
+      DB_USER: root
+      DB_PASSWORD: ${DB_PASSWORD:-root}
+      JWT_SECRET: ${JWT_SECRET:-rutalimpia-secreto-super-largo-de-32-chars-minimo}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-rl-internal-dev}
+      SEED_DATA: ${SEED_DATA:-always}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-true}
+      SPRING_JPA_SHOW_SQL: "false"
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=60}
+
+volumes:
+  mysql-data:
