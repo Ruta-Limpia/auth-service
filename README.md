@@ -164,9 +164,9 @@ El pipeline está en `.github/workflows/ci-cd.yml` y corre en GitHub Actions:
 
 1. **Build y tests:** `./mvnw verify` con Java 25. Guarda el jar y los reportes de tests como artefactos.
 2. **Imagen Docker:** construye la imagen con el jar ya probado, la levanta con MySQL y revisa `/actuator/health` y el login. La imagen no se publica.
-3. **Deploy:** copia el jar a una EC2 del Learner Lab por SSH, levanta los contenedores con `deploy/desplegar.sh` y comprueba que el servicio responda desde internet.
+3. **Deploy:** usa las credenciales temporales de AWS Academy y busca la EC2 por su nombre. Entra con EC2 Instance Connect usando una llave de un solo uso, levanta los contenedores con `deploy/desplegar.sh` y comprueba que el servicio responda desde internet.
 
-Los secretos de producción (llave SSH, clave de MySQL, JWT) están en el ambiente `produccion` de GitHub, no en el código. Para dejar la EC2 y GitHub listos, sigue la guía [docs/despliegue-aws.md](docs/despliegue-aws.md).
+En GitHub solo se guardan las tres credenciales de AWS Academy (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`). Las claves de MySQL y JWT se generan en la EC2 y no están en el código. Para dejar la EC2 y GitHub listos, sigue la guía [docs/despliegue-aws.md](docs/despliegue-aws.md).
 
 `GET /actuator/health` es público y solo muestra el estado (`UP` o `DOWN`), sin detalles. El pipeline lo usa para saber si el deploy funcionó.
 
