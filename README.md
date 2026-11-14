@@ -1,5 +1,7 @@
 # auth-service
 
+[![CI/CD auth-service](https://github.com/Ruta-Limpia/auth-service/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Ruta-Limpia/auth-service/actions/workflows/ci-cd.yml)
+
 Microservicio de usuarios y login de **RutaLimpia**. Se encarga de registrar usuarios, hacer el login y entregar el token (JWT) que después usan los otros servicios: solicitudes, flota y rutas.
 
 ## Qué se usó
@@ -85,6 +87,17 @@ Queda corriendo en `http://localhost:8081`. Está listo cuando aparece `Started 
 docker exec -it rl-mysql mysql -uroot -proot -e "SELECT id, nombre, email, rol, activo+0 AS activo FROM rl_auth.usuarios;"
 ```
 
+### Todo con Docker (opcional)
+
+También se puede levantar auth-service junto a su MySQL con Docker Compose, sin instalar nada más:
+
+```bash
+./mvnw clean package
+docker compose up -d --build
+```
+
+Para bajarlo: `docker compose down`. Si además quieres borrar los datos, usa `docker compose down -v`.
+
 ## Configuración
 
 Los datos de conexión están en `src/main/resources/application.properties`. Por defecto usa MySQL en `localhost:3306` con usuario `root` y clave `root`.
@@ -115,6 +128,7 @@ Todos tienen la clave `123456`.
 | DELETE | `/api/v1/usuarios/{id}`          | ADMIN               |
 | GET    | `/api/v1/usuarios/{id}/accesos`  | ADMIN               |
 | GET    | `/api/v1/internal/usuarios/{id}` | otros servicios     |
+| GET    | `/actuator/health`               | cualquiera          |
 
 Para las rutas con token se agrega el header `Authorization: Bearer <token>`. La ruta interna usa el header `X-Internal-Key`.
 
@@ -137,6 +151,24 @@ Cuando algo falla, la respuesta siempre trae el mismo formato:
   "path": "/api/v1/usuarios/15"
 }
 ```
+
+## CI/CD
+
+El pipeline está en `.github/workflows/ci-cd.yml` y corre en GitHub Actions:
+
+| Rama | Build y tests | Imagen Docker + prueba con MySQL | Deploy en AWS EC2 |
+|---|---|---|---|
+| PR a `develop` o `main` | sí | sí | no |
+| `develop` | sí | sí | no |
+| `main` | sí | sí | sí |
+
+1. **Build y tests:** `./mvnw verify` con Java 25. Guarda el jar y los reportes de tests como artefactos.
+2. **Imagen Docker:** construye la imagen con el jar ya probado, la levanta con MySQL y revisa `/actuator/health` y el login. La imagen no se publica.
+3. **Deploy:** copia el jar a una EC2 del Learner Lab por SSH, levanta los contenedores con `deploy/desplegar.sh` y comprueba que el servicio responda desde internet.
+
+Los secretos de producción (llave SSH, clave de MySQL, JWT) están en el ambiente `produccion` de GitHub, no en el código. Para dejar la EC2 y GitHub listos, sigue la guía [docs/despliegue-aws.md](docs/despliegue-aws.md).
+
+`GET /actuator/health` es público y solo muestra el estado (`UP` o `DOWN`), sin detalles. El pipeline lo usa para saber si el deploy funcionó.
 
 ## Cómo probarlo
 
