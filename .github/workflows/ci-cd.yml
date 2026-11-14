@@ -1,0 +1,171 @@
+name: CI/CD auth-service
+
+# develop: build, tests e imagen Docker (ambiente de pruebas)
+# main: lo mismo y ademas el deploy en la EC2 (produccion)
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build y tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Compilar, correr los tests y empaquetar
+        run: ./mvnw -B verify
+
+      - name: Guardar reportes de tests
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reportes-tests
+          path: target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Guardar el jar
+        uses: actions/upload-artifact@v7
+        with:
+          name: auth-service-jar
+          path: target/auth-service-*.jar
+          if-no-files-found: error
+          retention-days: 7
+
+  docker:
+    name: Imagen Docker y prueba con MySQL
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bajar el jar del build
+        uses: actions/download-artifact@v8
+        with:
+          name: auth-service-jar
+          path: target
+
+      # la imagen se construye y se prueba, pero no se publica en ningun registro
+      - name: Construir la imagen y levantarla con MySQL
+        run: bash deploy/desplegar.sh
+
+      - name: Probar endpoints sobre el contenedor
+        run: |
+          curl -fsS http://localhost:8081/actuator/health
+          codigo=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
+            -d '{"email":"admin@rutalimpia.cl","password":"123456"}' http://localhost:8081/api/v1/auth/login)
+          echo "login admin: $codigo"
+          test "$codigo" = "200"
+
+      - name: Logs del contenedor
+        if: failure()
+        run: docker compose logs --tail 200
+
+      - name: Bajar los contenedores
+        if: always()
+        run: docker compose down -v
+
+  deploy:
+    name: Deploy en AWS EC2
+    needs: docker
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    environment:
+      name: produccion
+      url: http://${{ vars.EC2_HOST }}:8081/actuator/health
+    concurrency:
+      group: deploy-produccion
+      cancel-in-progress: false
+    env:
+      EC2_HOST: ${{ vars.EC2_HOST }}
+      EC2_USER: ${{ vars.EC2_USER || 'ubuntu' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bajar el jar del build
+        uses: actions/download-artifact@v8
+        with:
+          name: auth-service-jar
+          path: target
+
+      - name: Revisar configuracion del ambiente
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+        run: |
+          faltan=""
+          for nombre in EC2_HOST EC2_SSH_KEY DB_PASSWORD JWT_SECRET INTERNAL_API_KEY; do
+              [ -n "${!nombre}" ] || faltan="$faltan $nombre"
+          done
+          if [ -n "$faltan" ]; then
+              echo "::error::Faltan en el environment 'produccion':$faltan (ver docs/despliegue-aws.md)"
+              exit 1
+          fi
+
+      - name: Llave SSH
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/ec2.pem
+          chmod 600 ~/.ssh/ec2.pem
+          cat > ~/.ssh/config <<EOF
+          Host ec2
+            HostName $EC2_HOST
+            User $EC2_USER
+            IdentityFile ~/.ssh/ec2.pem
+            StrictHostKeyChecking accept-new
+            ConnectTimeout 20
+          EOF
+
+      - name: Armar el .env de produccion
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+          SEED_DATA: ${{ vars.SEED_DATA || 'never' }}
+        run: |
+          umask 077
+          {
+              echo "DB_PASSWORD=$DB_PASSWORD"
+              echo "JWT_SECRET=$JWT_SECRET"
+              echo "INTERNAL_API_KEY=$INTERNAL_API_KEY"
+              echo "SEED_DATA=$SEED_DATA"
+          } > .env
+
+      - name: Copiar archivos a la EC2
+        run: |
+          ssh ec2 'rm -rf auth-service/target && mkdir -p auth-service/target auth-service/deploy'
+          scp target/auth-service-*.jar ec2:auth-service/target/
+          scp Dockerfile .dockerignore docker-compose.yml .env ec2:auth-service/
+          scp deploy/desplegar.sh ec2:auth-service/deploy/
+
+      - name: Desplegar
+        run: ssh ec2 'bash auth-service/deploy/desplegar.sh'
+
+      - name: Verificar desde internet
+        run: curl -fsS --retry 10 --retry-delay 5 --retry-all-errors "http://$EC2_HOST:8081/actuator/health"
+
+      - name: Borrar la llave del runner
+        if: always()
+        run: rm -f ~/.ssh/ec2.pem ~/.ssh/config .env
