@@ -1,6 +1,8 @@
 package cl.duoc.rutalimpia.auth.model;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 import cl.duoc.rutalimpia.auth.model.enums.Rol;
 import jakarta.persistence.Column;
@@ -10,6 +12,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
@@ -54,6 +57,11 @@ public class Usuario {
 
     @Column(name = "fecha_creacion", nullable = false, updatable = false)
     private LocalDateTime fechaCreacion;
+
+    // la llave foranea esta en registros_acceso.usuario_id
+    @OneToMany(mappedBy = "usuario")
+    @Builder.Default
+    private List<RegistroAcceso> accesos = new ArrayList<>();
 
     @PrePersist
     void alCrear() {

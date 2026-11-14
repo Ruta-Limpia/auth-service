@@ -44,7 +44,7 @@ class AuthFlujoIntegracionTest {
                 .get()
                 .satisfies(u -> assertThat(u.getPasswordHash()).startsWith("$2a$10$"));
 
-        LoginResponse login = authService.login(new LoginRequest("valentina@test.cl", "clave-segura"));
+        LoginResponse login = authService.login(new LoginRequest("valentina@test.cl", "clave-segura"), "127.0.0.1");
 
         assertThat(jwtUtil.obtenerUsuarioId(login.token())).isEqualTo(registrado.id());
         assertThat(jwtUtil.obtenerRol(login.token())).isEqualTo("VECINO");
@@ -62,7 +62,7 @@ class AuthFlujoIntegracionTest {
     void loginConClaveMalaFalla() {
         authService.registrar(new RegistroRequest("Tres", "tres@test.cl", "clave-segura"));
 
-        assertThatThrownBy(() -> authService.login(new LoginRequest("tres@test.cl", "clave-mala")))
+        assertThatThrownBy(() -> authService.login(new LoginRequest("tres@test.cl", "clave-mala"), "127.0.0.1"))
                 .isInstanceOf(BadCredentialsException.class);
     }
 }

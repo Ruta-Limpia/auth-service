@@ -17,9 +17,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 import cl.duoc.rutalimpia.auth.dto.ActualizarUsuarioRequest;
 import cl.duoc.rutalimpia.auth.dto.CrearUsuarioRequest;
+import cl.duoc.rutalimpia.auth.dto.RegistroAccesoResponse;
 import cl.duoc.rutalimpia.auth.dto.UsuarioResponse;
 import cl.duoc.rutalimpia.auth.exception.ErrorResponse;
 import cl.duoc.rutalimpia.auth.model.enums.Rol;
+import cl.duoc.rutalimpia.auth.service.RegistroAccesoService;
 import cl.duoc.rutalimpia.auth.service.UsuarioService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -36,6 +38,7 @@ import lombok.RequiredArgsConstructor;
 public class UsuarioController {
 
     private final UsuarioService usuarioService;
+    private final RegistroAccesoService registroAccesoService;
 
     @GetMapping("/api/v1/usuarios/me")
     @Operation(summary = "Perfil del usuario dueño del token", security = @SecurityRequirement(name = "bearer"))
@@ -116,6 +119,19 @@ public class UsuarioController {
         Long adminId = (Long) authentication.getPrincipal();
         usuarioService.eliminar(id, adminId);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/api/v1/usuarios/{id}/accesos")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Últimos 20 intentos de login de un usuario",
+            security = @SecurityRequirement(name = "bearer"))
+    @ApiResponse(responseCode = "200", description = "Historial de accesos, del más reciente al más antiguo")
+    @ApiResponse(responseCode = "403", description = "Solo ADMIN",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "404", description = "El usuario no existe",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    public ResponseEntity<List<RegistroAccesoResponse>> listarAccesos(@PathVariable Long id) {
+        return ResponseEntity.ok(registroAccesoService.listarPorUsuario(id));
     }
 
     @GetMapping("/api/v1/internal/usuarios/{id}")
