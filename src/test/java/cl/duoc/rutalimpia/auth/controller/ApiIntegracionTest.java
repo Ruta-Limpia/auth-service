@@ -262,6 +262,54 @@ class ApiIntegracionTest {
     }
 
     @Test
+    void historialGuardaLosLoginsExitososYFallidos() throws Exception {
+        login("vecino@rutalimpia.cl", "clave-mala").andExpect(status().isUnauthorized());
+        login("vecino@rutalimpia.cl", "123456").andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/v1/usuarios/3/accesos").header(HttpHeaders.AUTHORIZATION, bearer("admin@rutalimpia.cl")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].resultado").value("EXITOSO"))
+                .andExpect(jsonPath("$[0].ip").value("127.0.0.1"))
+                .andExpect(jsonPath("$[0].fecha").isNotEmpty())
+                .andExpect(jsonPath("$[1].resultado").value("CLAVE_INCORRECTA"));
+    }
+
+    @Test
+    void historialSoloParaAdminYDa404SiNoExiste() throws Exception {
+        mockMvc.perform(get("/api/v1/usuarios/3/accesos").header(HttpHeaders.AUTHORIZATION, bearer("vecino@rutalimpia.cl")))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/v1/usuarios/999/accesos").header(HttpHeaders.AUTHORIZATION, bearer("admin@rutalimpia.cl")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.mensaje").value("Usuario 999 no existe"));
+
+        mockMvc.perform(get("/api/v1/usuarios/3/accesos"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void sePuedeEliminarUnUsuarioQueTieneHistorial() throws Exception {
+        String admin = bearer("admin@rutalimpia.cl");
+        String nuevo = """
+                {"nombre": "Con Historial", "email": "historial@test.cl", "password": "clave-segura", "rol": "CONDUCTOR"}
+                """;
+        String creado = mockMvc.perform(post("/api/v1/usuarios").contentType(MediaType.APPLICATION_JSON).content(nuevo)
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        Integer id = JsonPath.read(creado, "$.id");
+        login("historial@test.cl", "clave-segura").andExpect(status().isOk());
+        login("historial@test.cl", "otra-clave").andExpect(status().isUnauthorized());
+
+        mockMvc.perform(delete("/api/v1/usuarios/" + id).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/v1/usuarios/" + id + "/accesos").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void rutaInternaConClaveDevuelveElUsuario() throws Exception {
         mockMvc.perform(get("/api/v1/internal/usuarios/2").header("X-Internal-Key", CLAVE_INTERNA))
                 .andExpect(status().isOk())
@@ -297,6 +345,7 @@ class ApiIntegracionTest {
                 .andExpect(jsonPath("$.paths['/api/v1/usuarios/me']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/usuarios']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/internal/usuarios/{id}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/usuarios/{id}/accesos']").exists())
                 .andExpect(jsonPath("$.components.securitySchemes.bearer").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/usuarios/me'].get.responses['401'].content['*/*'].schema['$ref']")
                         .value("#/components/schemas/ErrorResponse"))
