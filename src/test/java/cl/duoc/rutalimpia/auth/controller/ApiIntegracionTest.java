@@ -354,6 +354,17 @@ class ApiIntegracionTest {
     }
 
     @Test
+    void healthEsPublicoYNoMuestraDetalles() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"))
+                .andExpect(jsonPath("$.components").doesNotExist());
+
+        mockMvc.perform(get("/actuator/env"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void respuestasIncluyenCabecerasDeSeguridad() throws Exception {
         login("vecino@rutalimpia.cl", "123456")
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))

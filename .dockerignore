@@ -1,0 +1,3 @@
+# a la imagen solo entra el jar
+*
+!target/auth-service-*.jar
