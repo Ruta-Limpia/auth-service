@@ -1,0 +1,95 @@
+# Stack de Docker Swarm: auth-service con varias replicas + MySQL
+# Se despliega con swarm/desplegar-stack.sh (ver docs/swarm.md)
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_password
+      MYSQL_DATABASE: rl_auth
+    secrets:
+      - db_password
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$(cat /run/secrets/db_password)\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    deploy:
+      replicas: 1
+      # una sola replica: se resuelve por DNS directo a su contenedor, sin IP virtual
+      endpoint_mode: dnsrr
+      # la base se queda en el nodo que tiene su volumen
+      placement:
+        constraints:
+          - node.labels.rl.db == true
+      restart_policy:
+        condition: any
+        delay: 5s
+      resources:
+        limits:
+          memory: 768M
+
+  auth-service:
+    image: ${AUTH_IMAGE:-auth-service:local}
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/rl_auth?createDatabaseIfNotExist=true&serverTimezone=America/Santiago
+      DB_USER: root
+      # cada secreto queda como archivo en /run/secrets y Spring lo lee como propiedad
+      SPRING_CONFIG_IMPORT: optional:configtree:/run/secrets/
+      SEED_DATA: ${SEED_DATA:-never}
+      SPRING_JPA_SHOW_SQL: "false"
+    secrets:
+      - source: db_password
+        target: DB_PASSWORD
+      - source: jwt_secret
+        target: JWT_SECRET
+      - source: internal_api_key
+        target: INTERNAL_API_KEY
+    ports:
+      - target: 8081
+        published: 8081
+        protocol: tcp
+        mode: ingress
+    networks:
+      - backend
+    deploy:
+      replicas: 2
+      # actualizacion sin caida: levanta la nueva replica, espera que este sana
+      # y recien ahi baja la antigua; si falla, vuelve a la version anterior
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+        monitor: 60s
+      rollback_config:
+        parallelism: 1
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+        reservations:
+          memory: 384M
+
+networks:
+  backend:
+    driver: overlay
+
+volumes:
+  mysql-data:
+
+secrets:
+  db_password:
+    external: true
+  jwt_secret:
+    external: true
+  internal_api_key:
+    external: true
