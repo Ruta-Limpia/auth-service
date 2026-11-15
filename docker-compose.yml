@@ -1,6 +1,6 @@
-# auth-service + MySQL
-# Local:  ./mvnw clean package  y luego  docker compose up -d --build
-# En la EC2 lo levanta el pipeline con deploy/desplegar.sh
+# auth-service + MySQL para desarrollo y para la prueba del pipeline
+# Local: docker compose up -d --build  (la imagen se compila desde el codigo)
+# En produccion se usa docker-stack.yml con Docker Swarm (ver docs/swarm.md)
 services:
   mysql:
     image: mysql:8.4
@@ -35,7 +35,6 @@ services:
       SEED_DATA: ${SEED_DATA:-always}
       SWAGGER_ENABLED: ${SWAGGER_ENABLED:-true}
       SPRING_JPA_SHOW_SQL: "false"
-      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=60}
 
 volumes:
   mysql-data:
