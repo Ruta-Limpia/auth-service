@@ -1,8 +1,9 @@
 name: CI/CD auth-service
 
 # develop: build, tests e imagen Docker probada con MySQL (ambiente de pruebas)
-# main: lo mismo, y ademas publica la imagen en Amazon ECR y la despliega
-#       en el cluster Docker Swarm de la EC2 (produccion)
+# main: lo mismo, y ademas publica la imagen en Amazon ECR, crea la cola SQS,
+#       la Lambda y el API Gateway con Serverless, despliega en el cluster
+#       Docker Swarm de la EC2 y corre la prueba e2e (produccion)
 on:
   push:
     branches: [main, develop]
@@ -34,13 +35,26 @@ jobs:
       - name: Compilar, correr los tests y empaquetar
         run: ./mvnw -B verify
 
+      - name: Compilar y probar la Lambda de alertas
+        run: ./mvnw -B -f lambda-alertas/pom.xml verify
+
       - name: Guardar reportes de tests
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: reportes-tests
-          path: target/surefire-reports/
+          path: |
+            target/surefire-reports/
+            lambda-alertas/target/surefire-reports/
           if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Guardar el jar de la Lambda
+        uses: actions/upload-artifact@v7
+        with:
+          name: lambda-alertas-jar
+          path: lambda-alertas/target/lambda-alertas.jar
+          if-no-files-found: error
           retention-days: 7
 
       - name: Guardar el jar
@@ -93,6 +107,7 @@ jobs:
       AWS_REGION: us-east-1
       ECR_REPO: auth-service
       INSTANCIA: ${{ vars.EC2_INSTANCE_NAME || 'auth-service' }}
+      WORKER: ${{ vars.EC2_WORKER_NAME || 'auth-service-worker' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -104,7 +119,7 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # repositorio ECR y reglas del security group, se crean solo si faltan
+      # repositorio ECR, reglas del security group y rol de las EC2; se crean solo si faltan
       - name: Crear recursos de AWS
         run: bash deploy/aws-recursos.sh
 
@@ -126,9 +141,71 @@ jobs:
         if: always()
         run: docker logout "${IMAGEN%%/*}" || true
 
+  serverless:
+    name: Cola SQS, Lambda y API Gateway (Serverless)
+    needs: docker
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      INSTANCIA: ${{ vars.EC2_INSTANCE_NAME || 'auth-service' }}
+      ETAPA: prod
+      SLS_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bajar el jar de la Lambda
+        uses: actions/download-artifact@v8
+        with:
+          name: lambda-alertas-jar
+          path: lambda-alertas/target
+
+      - name: Node 22 para Serverless Framework
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Configurar credenciales temporales de AWS Academy
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # el API Gateway reenvia a la IP publica (Elastic IP) del manager del Swarm
+      - name: Buscar la IP de auth-service
+        run: |
+          ip=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=$INSTANCIA" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[] | [0].PublicIpAddress' --output text)
+          if [ -z "$ip" ] || [ "$ip" = "None" ]; then
+              echo "::error::No hay una EC2 corriendo con el nombre '$INSTANCIA' (revisa que el Learner Lab este encendido)"
+              exit 1
+          fi
+          echo "auth-service en $ip"
+          echo "BACKEND=http://$ip:8081" >> "$GITHUB_ENV"
+
+      # crea o actualiza la cola, la DLQ, la Lambda, el tema SNS y el API Gateway
+      - name: Desplegar con Serverless
+        working-directory: lambda-alertas
+        env:
+          ALERTA_EMAIL: ${{ vars.ALERTA_EMAIL }}
+        run: |
+          parametros=(--param="backendUrl=$BACKEND")
+          if [ -n "$ALERTA_EMAIL" ]; then
+              parametros+=(--param="alertaEmail=$ALERTA_EMAIL")
+          fi
+          npx --yes serverless@3.38.0 deploy --stage "$ETAPA" "${parametros[@]}"
+
+      - name: Mostrar las salidas
+        run: |
+          aws cloudformation describe-stacks --stack-name "rl-auth-eventos-$ETAPA" \
+            --query 'Stacks[0].Outputs[].[OutputKey, OutputValue]' --output table | tee -a "$GITHUB_STEP_SUMMARY"
+
   deploy:
     name: Deploy en Docker Swarm (EC2)
-    needs: publicar
+    needs: [publicar, serverless]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     environment:
@@ -187,6 +264,11 @@ jobs:
 
           cuenta=$(aws sts get-caller-identity --query Account --output text)
           echo "REGISTRO=$cuenta.dkr.ecr.$AWS_REGION.amazonaws.com" >> "$GITHUB_ENV"
+
+          # la cola la creo el job de Serverless
+          cola=$(aws sqs get-queue-url --queue-name rl-auth-eventos-prod --query QueueUrl --output text)
+          echo "cola de eventos: $cola"
+          echo "COLA_URL=$cola" >> "$GITHUB_ENV"
 
       # llave SSH de un solo uso: EC2 Instance Connect la acepta por 60 segundos,
       # y la conexion maestra queda abierta para el resto de los pasos
@@ -268,7 +350,7 @@ jobs:
         run: |
           aws ecr get-login-password | ssh ec2 "docker login --username AWS --password-stdin $REGISTRO"
           ssh ec2 "cd auth-service && set -a && . ./.env && set +a \
-              && AUTH_IMAGE=$REGISTRO/$ECR_REPO:$GITHUB_SHA bash swarm/desplegar-stack.sh"
+              && AUTH_IMAGE=$REGISTRO/$ECR_REPO:$GITHUB_SHA EVENTOS_COLA_URL=$COLA_URL bash swarm/desplegar-stack.sh"
 
       - name: Estado del cluster
         if: always()
@@ -291,3 +373,32 @@ jobs:
           ssh -O exit ec2 2> /dev/null || true
           ssh -O exit worker 2> /dev/null || true
           rm -f ~/.ssh/deploy ~/.ssh/deploy.pub ~/.ssh/config
+
+  e2e:
+    name: Prueba e2e (API Gateway, Swarm, SQS y Lambda)
+    needs: deploy
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configurar credenciales temporales de AWS Academy
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Buscar la URL del API Gateway
+        run: |
+          url=$(aws cloudformation describe-stacks --stack-name rl-auth-eventos-prod \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)
+          echo "API Gateway: $url"
+          echo "API_URL=$url" >> "$GITHUB_ENV"
+
+      # registro, login, token, rutas protegidas, 3 logins fallidos y la alerta de la Lambda
+      - name: Probar de punta a punta
+        run: bash pruebas/e2e.sh "$API_URL"

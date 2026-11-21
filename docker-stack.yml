@@ -42,6 +42,9 @@ services:
       SPRING_CONFIG_IMPORT: optional:configtree:/run/secrets/
       SEED_DATA: ${SEED_DATA:-never}
       SPRING_JPA_SHOW_SQL: "false"
+      # cola SQS de eventos; las credenciales salen del rol de la EC2 (LabInstanceProfile)
+      EVENTOS_COLA_URL: ${EVENTOS_COLA_URL:-}
+      AWS_REGION: us-east-1
     secrets:
       - source: db_password
         target: DB_PASSWORD

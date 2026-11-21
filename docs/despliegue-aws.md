@@ -47,6 +47,7 @@ Estas credenciales **caducan cada vez que el laboratorio se reinicia**. Cuando a
 |---|---|
 | `EC2_INSTANCE_NAME` | Si tu instancia no se llama `auth-service` |
 | `EC2_WORKER_NAME` | Si el worker no se llama `auth-service-worker` |
+| `ALERTA_EMAIL` | Correo que recibe las alertas de login fallido. AWS manda un correo para confirmar la suscripción: hay que abrirlo y presionar **Confirm subscription** |
 | `SEED_DATA` | `never` por defecto. Con `always` se cargan los usuarios de prueba (clave `123456`) |
 
 Si quieres los usuarios de prueba, define `SEED_DATA=always` **antes del primer deploy**. Usan los ids 1, 2 y 3, así que si ya hay usuarios registrados con esos ids, no se cargan.
@@ -55,20 +56,22 @@ Las claves de MySQL, JWT y la clave interna se generan solas en la EC2 en el pri
 
 ## 4. Desplegar
 
-Haz un push a `main`, o entra a **Actions > CI/CD auth-service > Run workflow**. Los cuatro jobs son:
+Haz un push a `main`, o entra a **Actions > CI/CD auth-service > Run workflow**. Los seis jobs son:
 
-1. **Build y tests:** compila con Java 25, corre los tests y guarda el `.jar` y los reportes como artefactos.
+1. **Build y tests:** compila auth-service y la Lambda con Java 25, corre los tests y guarda los `.jar` y los reportes como artefactos.
 2. **Imagen Docker y prueba con MySQL:** construye la imagen, la levanta con MySQL y prueba el health, el login y que no corra como root.
 3. **Publicar imagen en Amazon ECR:** solo en `main`.
-   1. Crea el repositorio ECR y las reglas del security group si no existen (`deploy/aws-recursos.sh`).
+   1. Crea el repositorio ECR, las reglas del security group y el rol `LabInstanceProfile` de las EC2 si no existen (`deploy/aws-recursos.sh`).
    2. Sube la imagen con dos tags: el hash del commit y `latest`.
-4. **Deploy en Docker Swarm (EC2):** solo en `main`.
+4. **Cola SQS, Lambda y API Gateway (Serverless):** solo en `main`. Con `npx serverless@3.38.0 deploy` crea o actualiza la cola y su DLQ, la Lambda de alertas, el tema SNS y el API Gateway, que apunta a la IP de la EC2. Al final muestra la URL del API Gateway. Detalle en [eventos-serverless.md](eventos-serverless.md).
+5. **Deploy en Docker Swarm (EC2):** solo en `main`.
    1. Busca el manager y el worker por su nombre.
    2. Entra con EC2 Instance Connect, usando una llave de un solo uso.
    3. Si la EC2 todavía tenía la versión con Docker Compose, la baja.
    4. Inicia el Swarm y suma el worker, si existe.
    5. Despliega el stack con la imagen de ECR y espera a que las réplicas estén sanas. Si la versión nueva falla, Swarm vuelve a la anterior y el job falla.
    6. Muestra el estado del cluster y comprueba que el servicio responda desde internet.
+6. **Prueba e2e:** corre `pruebas/e2e.sh` contra el API Gateway y revisa en CloudWatch que la Lambda haya mandado la alerta.
 
 El primer deploy en Swarm crea una base nueva (el volumen de Docker Compose queda guardado, pero no se usa). Si quieres los usuarios de prueba, deja `SEED_DATA=always` para ese deploy.
 
@@ -87,13 +90,14 @@ Para revisar que quedó arriba:
 
 ## Evidencia para el foro
 
-1. La pestaña **Actions** con el run de `main` en verde y los cuatro jobs.
+1. La pestaña **Actions** con el run de `main` en verde y los seis jobs.
 2. El job **Publicar imagen en Amazon ECR** con "Crear recursos de AWS" y la subida de la imagen.
 3. El job **Deploy en Docker Swarm (EC2)** abierto, con "Estado del cluster" y "Verificar desde internet" en verde.
 4. La consola de ECR con el repositorio `auth-service` y las imágenes con el hash del commit.
 5. La consola de EC2 con las instancias `auth-service` y `auth-service-worker` corriendo.
 6. En el manager: `bash ~/auth-service/swarm/estado.sh` y `bash ~/auth-service/swarm/escalar.sh 4`.
-7. El navegador o Postman contra `http://<ELASTIC_IP>:8081`: el health, un registro y un login.
+7. El navegador o Postman contra la URL del API Gateway (`https://...execute-api...`): el health, un registro y un login.
+8. 3 logins fallidos y el correo de alerta que llega. En la consola: la cola SQS, los logs de la Lambda en CloudWatch y el tema SNS.
 
 ## Learner Lab: tener en cuenta
 

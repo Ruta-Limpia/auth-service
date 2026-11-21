@@ -1,5 +1,7 @@
 package cl.duoc.rutalimpia.auth.service.impl;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
@@ -21,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 public class RegistroAccesoServiceImpl implements RegistroAccesoService {
 
     private static final int LARGO_MAXIMO_IP = 45;
+    private static final Duration VENTANA_FALLIDOS = Duration.ofMinutes(15);
 
     private final RegistroAccesoRepository registroAccesoRepository;
     private final UsuarioRepository usuarioRepository;
@@ -34,6 +37,21 @@ public class RegistroAccesoServiceImpl implements RegistroAccesoService {
                 .resultado(resultado)
                 .ip(recortar(ip))
                 .build());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public int contarFallidosSeguidos(Long usuarioId) {
+        LocalDateTime desde = LocalDateTime.now().minus(VENTANA_FALLIDOS);
+        int fallidos = 0;
+        // vienen del mas nuevo al mas antiguo: se cuenta hasta el primer login correcto
+        for (RegistroAcceso acceso : registroAccesoRepository.findTop20ByUsuarioIdOrderByFechaDescIdDesc(usuarioId)) {
+            if (acceso.getResultado() == ResultadoAcceso.EXITOSO || acceso.getFecha().isBefore(desde)) {
+                break;
+            }
+            fallidos++;
+        }
+        return fallidos;
     }
 
     @Override

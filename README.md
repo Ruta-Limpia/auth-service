@@ -169,20 +169,30 @@ bash swarm/estado.sh        # nodos, servicios y réplicas
 bash swarm/escalar.sh 4     # escalar a 4 réplicas
 ```
 
+## Eventos, alertas y API Gateway
+
+Cuando una cuenta acumula 3 intentos fallidos de login seguidos, llega un correo de alerta. auth-service publica cada login fallido y cada registro en una cola **SQS**. Una **Lambda** en Java 25 lee la cola y, cuando corresponde, avisa por **SNS**. Delante del servicio hay un **API Gateway** con HTTPS y límite de peticiones. Todo se crea con Serverless Framework (`lambda-alertas/serverless.yml`).
+
+En local y en los tests no hay cola configurada, así que los eventos no se envían. Para activarlos se define `EVENTOS_COLA_URL`.
+
+Cómo funciona y por qué se hizo así: [docs/eventos-serverless.md](docs/eventos-serverless.md).
+
 ## CI/CD
 
 El pipeline está en `.github/workflows/ci-cd.yml` y corre en GitHub Actions:
 
-| Rama | Build y tests | Imagen Docker + prueba con MySQL | Publicar en ECR | Deploy en Swarm |
-|---|---|---|---|---|
-| PR a `develop` o `main` | sí | sí | no | no |
-| `develop` | sí | sí | no | no |
-| `main` | sí | sí | sí | sí |
+| Rama | Build y tests | Imagen Docker + prueba con MySQL | ECR | SQS, Lambda y API Gateway | Deploy en Swarm | Prueba e2e |
+|---|---|---|---|---|---|---|
+| PR a `develop` o `main` | sí | sí | no | no | no | no |
+| `develop` | sí | sí | no | no | no | no |
+| `main` | sí | sí | sí | sí | sí | sí |
 
-1. **Build y tests:** `./mvnw verify` con Java 25. Guarda el jar y los reportes de tests como artefactos.
+1. **Build y tests:** `./mvnw verify` con Java 25, para auth-service y para la Lambda. Guarda los jars y los reportes de tests como artefactos.
 2. **Imagen Docker:** construye la imagen, la levanta con MySQL y revisa `/actuator/health`, el login y que no corra como root.
 3. **Publicar en ECR:** con `deploy/aws-recursos.sh` crea el repositorio ECR y abre los puertos del Swarm en el security group, si es que faltan. Después sube la imagen con el hash del commit y `latest`.
-4. **Deploy en Swarm:** busca las EC2 por su nombre y entra con EC2 Instance Connect usando una llave de un solo uso. Inicia el Swarm, suma el worker si existe, despliega el stack con la imagen nueva y comprueba que responda desde internet.
+4. **SQS, Lambda y API Gateway:** `serverless deploy` crea o actualiza la cola, la DLQ, la Lambda, el tema SNS y el API Gateway.
+5. **Deploy en Swarm:** busca las EC2 por su nombre y entra con EC2 Instance Connect usando una llave de un solo uso. Inicia el Swarm, suma el worker si existe, despliega el stack con la imagen nueva y la URL de la cola, y comprueba que responda desde internet.
+6. **Prueba e2e:** `pruebas/e2e.sh` prueba contra el API Gateway: registro, login, token y 3 logins fallidos. Después revisa en CloudWatch que la Lambda haya enviado la alerta.
 
 En GitHub solo se guardan las tres credenciales de AWS Academy (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`). Las claves de MySQL y JWT se generan en la EC2, quedan como secretos de Swarm y no están en el código. Para dejar la EC2 y GitHub listos, sigue la guía [docs/despliegue-aws.md](docs/despliegue-aws.md).
 

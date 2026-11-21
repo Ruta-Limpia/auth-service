@@ -1,0 +1,175 @@
+# Servicios de AWS de auth-service que no corren en el Swarm:
+#   - cola SQS rl-auth-eventos (+ DLQ) donde auth-service deja los eventos
+#   - Lambda "alertas" que lee la cola y avisa por correo con SNS
+#   - API Gateway (HTTP API) delante de auth-service, con HTTPS y limite de peticiones
+#
+# Lo despliega el pipeline:
+#   npx serverless@3.38.0 deploy --stage prod --param="backendUrl=http://<ip>:8081" --param="alertaEmail=<correo>"
+service: rl-auth-eventos
+frameworkVersion: '3'
+# la version 3 todavia no conoce java25 en su validacion, pero Lambda si lo soporta
+configValidationMode: warn
+
+params:
+  default:
+    backendUrl: http://localhost:8081
+    alertaEmail: ''
+    umbralFallidos: '3'
+
+provider:
+  name: aws
+  runtime: java25
+  architecture: x86_64
+  region: us-east-1
+  stage: ${opt:stage, 'prod'}
+  memorySize: 512
+  timeout: 30
+  logRetentionInDays: 7
+  # en AWS Academy no se pueden crear roles: se usa el que ya trae el laboratorio
+  iam:
+    role: arn:aws:iam::${aws:accountId}:role/LabRole
+
+package:
+  artifact: target/lambda-alertas.jar
+
+functions:
+  alertas:
+    handler: cl.duoc.rutalimpia.alertas.AlertasHandler::handleRequest
+    description: Lee los eventos de auth-service y avisa por correo los login fallidos seguidos
+    environment:
+      ALERTAS_TOPIC_ARN: !Ref TemaAlertas
+      UMBRAL_FALLIDOS: ${param:umbralFallidos}
+      # arranque mas rapido de la JVM para una funcion corta
+      JAVA_TOOL_OPTIONS: -XX:+TieredCompilation -XX:TieredStopAtLevel=1
+    events:
+      - sqs:
+          arn: !GetAtt ColaEventos.Arn
+          batchSize: 10
+          maximumBatchingWindow: 5
+          # si un mensaje del lote falla, solo ese vuelve a la cola
+          functionResponseType: ReportBatchItemFailures
+
+resources:
+  Conditions:
+    ConCorreo: !Not [!Equals ['${param:alertaEmail}', '']]
+
+  Resources:
+    # mensajes que fallaron 3 veces; quedan 14 dias para revisarlos
+    ColaEventosDlq:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: rl-auth-eventos-dlq-${sls:stage}
+        MessageRetentionPeriod: 1209600
+        SqsManagedSseEnabled: true
+
+    ColaEventos:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: rl-auth-eventos-${sls:stage}
+        # 6 veces el timeout de la Lambda, como recomienda AWS
+        VisibilityTimeout: 180
+        MessageRetentionPeriod: 345600
+        SqsManagedSseEnabled: true
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt ColaEventosDlq.Arn
+          maxReceiveCount: 3
+
+    TemaAlertas:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: rl-auth-alertas-${sls:stage}
+        DisplayName: RutaLimpia
+
+    # AWS manda un correo para confirmar la suscripcion; hay que aceptarlo una vez
+    SuscripcionCorreo:
+      Type: AWS::SNS::Subscription
+      Condition: ConCorreo
+      Properties:
+        TopicArn: !Ref TemaAlertas
+        Protocol: email
+        Endpoint: ${param:alertaEmail}
+
+    # ---- API Gateway delante de auth-service ----
+    ApiAuth:
+      Type: AWS::ApiGatewayV2::Api
+      Properties:
+        Name: rl-auth-api-${sls:stage}
+        ProtocolType: HTTP
+        Description: Entrada publica de auth-service (HTTPS)
+        CorsConfiguration:
+          AllowOrigins: ['*']
+          AllowMethods: [GET, POST, PUT, DELETE, OPTIONS]
+          AllowHeaders: [Authorization, Content-Type]
+          MaxAge: 600
+
+    # reenvia la peticion a auth-service con la misma ruta que llego
+    IntegracionAuth:
+      Type: AWS::ApiGatewayV2::Integration
+      Properties:
+        ApiId: !Ref ApiAuth
+        IntegrationType: HTTP_PROXY
+        IntegrationMethod: ANY
+        IntegrationUri: ${param:backendUrl}
+        PayloadFormatVersion: '1.0'
+        TimeoutInMillis: 15000
+        RequestParameters:
+          overwrite:path: $request.path
+
+    # solo se publican estas rutas; /api/v1/internal/** queda fuera a proposito
+    RutaAuth:
+      Type: AWS::ApiGatewayV2::Route
+      Properties:
+        ApiId: !Ref ApiAuth
+        RouteKey: ANY /api/v1/auth/{proxy+}
+        Target: !Join [/, [integrations, !Ref IntegracionAuth]]
+
+    RutaUsuarios:
+      Type: AWS::ApiGatewayV2::Route
+      Properties:
+        ApiId: !Ref ApiAuth
+        RouteKey: ANY /api/v1/usuarios
+        Target: !Join [/, [integrations, !Ref IntegracionAuth]]
+
+    RutaUsuariosDetalle:
+      Type: AWS::ApiGatewayV2::Route
+      Properties:
+        ApiId: !Ref ApiAuth
+        RouteKey: ANY /api/v1/usuarios/{proxy+}
+        Target: !Join [/, [integrations, !Ref IntegracionAuth]]
+
+    RutaSalud:
+      Type: AWS::ApiGatewayV2::Route
+      Properties:
+        ApiId: !Ref ApiAuth
+        RouteKey: GET /actuator/health
+        Target: !Join [/, [integrations, !Ref IntegracionAuth]]
+
+    LogsApi:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/http-api/rl-auth-api-${sls:stage}
+        RetentionInDays: 7
+
+    EtapaApi:
+      Type: AWS::ApiGatewayV2::Stage
+      Properties:
+        ApiId: !Ref ApiAuth
+        StageName: $default
+        AutoDeploy: true
+        # limite para todo el API: 20 peticiones por segundo, rafagas de hasta 50
+        DefaultRouteSettings:
+          ThrottlingRateLimit: 20
+          ThrottlingBurstLimit: 50
+        AccessLogSettings:
+          DestinationArn: !GetAtt LogsApi.Arn
+          Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","metodo":"$context.httpMethod","ruta":"$context.path","estado":"$context.status","ms":"$context.responseLatency","backend":"$context.integrationStatus"}'
+
+  Outputs:
+    ApiUrl:
+      Description: URL publica (HTTPS) de auth-service
+      Value: !GetAtt ApiAuth.ApiEndpoint
+    ColaEventosUrl:
+      Description: Cola donde auth-service publica los eventos
+      Value: !Ref ColaEventos
+    TemaAlertasArn:
+      Value: !Ref TemaAlertas
