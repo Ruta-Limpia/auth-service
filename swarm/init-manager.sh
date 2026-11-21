@@ -5,7 +5,9 @@ set -euo pipefail
 
 if [ "$(docker info --format '{{.Swarm.LocalNodeState}}')" != "active" ]; then
     IP="${1:-$(hostname -I | awk '{print $1}')}"
-    docker swarm init --advertise-addr "$IP"
+    # la salida de "swarm init" trae el token para unir workers; no se muestra
+    docker swarm init --advertise-addr "$IP" > /dev/null
+    echo "Swarm iniciado, este nodo es el manager ($IP)"
 else
     echo "Este nodo ya es parte de un Swarm"
 fi

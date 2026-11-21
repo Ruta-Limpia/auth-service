@@ -133,7 +133,13 @@ jobs:
       # cada version queda con el hash del commit, asi se puede volver a cualquiera
       - name: Construir y subir la imagen
         run: |
-          docker build -t "$IMAGEN:$GITHUB_SHA" -t "$IMAGEN:latest" .
+          # Maven Central a veces responde 429 (demasiadas descargas desde GitHub), por eso se reintenta
+          for intento in 1 2 3; do
+              docker build -t "$IMAGEN:$GITHUB_SHA" -t "$IMAGEN:latest" . && break
+              if [ "$intento" = 3 ]; then exit 1; fi
+              echo "::warning::fallo la construccion (intento $intento), se reintenta en 30 s"
+              sleep 30
+          done
           docker push "$IMAGEN:$GITHUB_SHA"
           docker push "$IMAGEN:latest"
 
@@ -287,6 +293,8 @@ jobs:
             ControlMaster auto
             ControlPath ~/.ssh/cm-%C
             ControlPersist 15m
+            ServerAliveInterval 20
+            ServerAliveCountMax 6
           EOF
               aws ec2-instance-connect send-ssh-public-key \
                 --instance-id "$3" --instance-os-user "$EC2_USER" \
