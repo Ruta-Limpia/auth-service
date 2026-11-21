@@ -10,6 +10,9 @@ public interface RegistroAccesoService {
 
     void registrar(Usuario usuario, ResultadoAcceso resultado, String ip);
 
+    // intentos fallidos seguidos de los ultimos 15 minutos, desde el ultimo login correcto
+    int contarFallidosSeguidos(Long usuarioId);
+
     // los ultimos 20, del mas nuevo al mas antiguo
     List<RegistroAccesoResponse> listarPorUsuario(Long usuarioId);
 }

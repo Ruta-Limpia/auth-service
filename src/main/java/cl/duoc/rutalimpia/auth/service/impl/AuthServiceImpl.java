@@ -4,6 +4,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -14,6 +15,7 @@ import cl.duoc.rutalimpia.auth.dto.LoginRequest;
 import cl.duoc.rutalimpia.auth.dto.LoginResponse;
 import cl.duoc.rutalimpia.auth.dto.RegistroRequest;
 import cl.duoc.rutalimpia.auth.dto.UsuarioResponse;
+import cl.duoc.rutalimpia.auth.evento.EventoAuth;
 import cl.duoc.rutalimpia.auth.mapper.UsuarioMapper;
 import cl.duoc.rutalimpia.auth.model.Usuario;
 import cl.duoc.rutalimpia.auth.model.enums.ResultadoAcceso;
@@ -35,26 +37,30 @@ public class AuthServiceImpl implements AuthService {
     private final JwtUtil jwtUtil;
     private final UsuarioMapper usuarioMapper;
     private final RegistroAccesoService registroAccesoService;
+    private final ApplicationEventPublisher eventos;
 
     // para que un email que no existe demore lo mismo que una clave mala
     private final String hashReferencia;
 
     public AuthServiceImpl(UsuarioRepository usuarioRepository, UsuarioService usuarioService,
             PasswordEncoder passwordEncoder, JwtUtil jwtUtil, UsuarioMapper usuarioMapper,
-            RegistroAccesoService registroAccesoService) {
+            RegistroAccesoService registroAccesoService, ApplicationEventPublisher eventos) {
         this.usuarioRepository = usuarioRepository;
         this.usuarioService = usuarioService;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
         this.usuarioMapper = usuarioMapper;
         this.registroAccesoService = registroAccesoService;
+        this.eventos = eventos;
         this.hashReferencia = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
     @Override
     public UsuarioResponse registrar(RegistroRequest request) {
-        return usuarioService.crear(new CrearUsuarioRequest(
+        UsuarioResponse creado = usuarioService.crear(new CrearUsuarioRequest(
                 request.nombre(), request.email(), request.password(), Rol.VECINO));
+        eventos.publishEvent(EventoAuth.usuarioRegistrado(creado.id(), creado.email()));
+        return creado;
     }
 
     // sin rollback en el 401, si no el intento fallido no quedaria guardado
@@ -73,8 +79,11 @@ public class AuthServiceImpl implements AuthService {
         Usuario usuario = encontrado.get();
         boolean passwordCorrecta = passwordEncoder.matches(request.password(), usuario.getPasswordHash());
         if (!passwordCorrecta || !usuario.isActivo()) {
-            registroAccesoService.registrar(usuario,
-                    passwordCorrecta ? ResultadoAcceso.CUENTA_INACTIVA : ResultadoAcceso.CLAVE_INCORRECTA, ip);
+            ResultadoAcceso motivo = passwordCorrecta ? ResultadoAcceso.CUENTA_INACTIVA : ResultadoAcceso.CLAVE_INCORRECTA;
+            registroAccesoService.registrar(usuario, motivo, ip);
+            // la Lambda de alertas decide si avisa segun cuantos fallidos seguidos lleva
+            eventos.publishEvent(EventoAuth.loginFallido(usuario.getId(), usuario.getEmail(), ip, motivo,
+                    registroAccesoService.contarFallidosSeguidos(usuario.getId())));
             log.warn("Login rechazado para usuario {}", usuario.getId());
             throw credencialesInvalidas();
         }
