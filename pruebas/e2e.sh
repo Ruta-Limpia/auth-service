@@ -74,9 +74,11 @@ if [ -z "$usuario_id" ]; then
 elif ! command -v aws > /dev/null || ! aws sts get-caller-identity > /dev/null 2>&1; then
     echo "  --    sin credenciales de AWS: no se revisan los logs de la Lambda"
 else
+    # el CLI puede devolver varias paginas (un numero por pagina), por eso se suman
     buscar() {
         aws logs filter-log-events --log-group-name "$LOG_LAMBDA" --start-time "$inicio_ms" \
-            --filter-pattern "\"$1\"" --query 'length(events)' --output text 2> /dev/null || echo 0
+            --filter-pattern "\"$1\"" --query 'length(events)' --output text 2> /dev/null \
+            | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) total += $i } END { print total + 0 }'
     }
     registrado=0 alerta=0
     for _ in $(seq 1 24); do
