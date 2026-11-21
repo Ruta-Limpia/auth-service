@@ -89,10 +89,9 @@ docker exec -it rl-mysql mysql -uroot -proot -e "SELECT id, nombre, email, rol, 
 
 ### Todo con Docker (opcional)
 
-También se puede levantar auth-service junto a su MySQL con Docker Compose, sin instalar nada más:
+También se puede levantar auth-service junto a su MySQL con Docker Compose. No hace falta tener Java: la imagen compila el proyecto adentro.
 
 ```bash
-./mvnw clean package
 docker compose up -d --build
 ```
 
@@ -152,21 +151,50 @@ Cuando algo falla, la respuesta siempre trae el mismo formato:
 }
 ```
 
+## Imagen Docker
+
+El `Dockerfile` tiene dos etapas:
+
+1. **build:** usa el JDK y Maven para compilar. Primero copia solo el `pom.xml` y baja las dependencias, así esa capa queda en caché mientras no cambien las dependencias. Después separa el jar en capas con `jarmode=tools`.
+2. **imagen final:** solo lleva el JRE y las capas del jar, ordenadas de la que menos cambia (dependencias) a la que más cambia (nuestro código). Cuando se cambia el código, solo se vuelve a subir una capa de unos 74 KB.
+
+Además corre con un usuario sin privilegios (`spring`), tiene `HEALTHCHECK` contra `/actuator/health` y la JVM se ajusta a la memoria del contenedor. Pesa unos 430 MB, contra 600 MB de la versión anterior.
+
+## Docker Swarm
+
+En producción corre en un cluster Docker Swarm sobre EC2: un manager, un worker opcional, 2 réplicas de auth-service y MySQL, con actualización sin caída y rollback automático. El detalle, los scripts y por qué se configuró así están en [docs/swarm.md](docs/swarm.md).
+
+```bash
+bash swarm/estado.sh        # nodos, servicios y réplicas
+bash swarm/escalar.sh 4     # escalar a 4 réplicas
+```
+
+## Eventos, alertas y API Gateway
+
+Cuando una cuenta acumula 3 intentos fallidos de login seguidos, llega un correo de alerta. auth-service publica cada login fallido y cada registro en una cola **SQS**. Una **Lambda** en Java 25 lee la cola y, cuando corresponde, avisa por **SNS**. Delante del servicio hay un **API Gateway** con HTTPS y límite de peticiones. Todo se crea con Serverless Framework (`lambda-alertas/serverless.yml`).
+
+En local y en los tests no hay cola configurada, así que los eventos no se envían. Para activarlos se define `EVENTOS_COLA_URL`.
+
+Cómo funciona y por qué se hizo así: [docs/eventos-serverless.md](docs/eventos-serverless.md).
+
 ## CI/CD
 
 El pipeline está en `.github/workflows/ci-cd.yml` y corre en GitHub Actions:
 
-| Rama | Build y tests | Imagen Docker + prueba con MySQL | Deploy en AWS EC2 |
-|---|---|---|---|
-| PR a `develop` o `main` | sí | sí | no |
-| `develop` | sí | sí | no |
-| `main` | sí | sí | sí |
+| Rama | Build y tests | Imagen Docker + prueba con MySQL | ECR | SQS, Lambda y API Gateway | Deploy en Swarm | Prueba e2e |
+|---|---|---|---|---|---|---|
+| PR a `develop` o `main` | sí | sí | no | no | no | no |
+| `develop` | sí | sí | no | no | no | no |
+| `main` | sí | sí | sí | sí | sí | sí |
 
-1. **Build y tests:** `./mvnw verify` con Java 25. Guarda el jar y los reportes de tests como artefactos.
-2. **Imagen Docker:** construye la imagen con el jar ya probado, la levanta con MySQL y revisa `/actuator/health` y el login. La imagen no se publica.
-3. **Deploy:** usa las credenciales temporales de AWS Academy y busca la EC2 por su nombre. Entra con EC2 Instance Connect usando una llave de un solo uso, levanta los contenedores con `deploy/desplegar.sh` y comprueba que el servicio responda desde internet.
+1. **Build y tests:** `./mvnw verify` con Java 25, para auth-service y para la Lambda. Guarda los jars y los reportes de tests como artefactos.
+2. **Imagen Docker:** construye la imagen, la levanta con MySQL y revisa `/actuator/health`, el login y que no corra como root.
+3. **Publicar en ECR:** con `deploy/aws-recursos.sh` crea el repositorio ECR y abre los puertos del Swarm en el security group, si es que faltan. Después sube la imagen con el hash del commit y `latest`.
+4. **SQS, Lambda y API Gateway:** `serverless deploy` crea o actualiza la cola, la DLQ, la Lambda, el tema SNS y el API Gateway.
+5. **Deploy en Swarm:** busca las EC2 por su nombre y entra con EC2 Instance Connect usando una llave de un solo uso. Inicia el Swarm, suma el worker si existe, despliega el stack con la imagen nueva y la URL de la cola, y comprueba que responda desde internet.
+6. **Prueba e2e:** `pruebas/e2e.sh` prueba contra el API Gateway: registro, login, token y 3 logins fallidos. Después revisa en CloudWatch que la Lambda haya enviado la alerta.
 
-En GitHub solo se guardan las tres credenciales de AWS Academy (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`). Las claves de MySQL y JWT se generan en la EC2 y no están en el código. Para dejar la EC2 y GitHub listos, sigue la guía [docs/despliegue-aws.md](docs/despliegue-aws.md).
+En GitHub solo se guardan las tres credenciales de AWS Academy (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`). Las claves de MySQL y JWT se generan en la EC2, quedan como secretos de Swarm y no están en el código. Para dejar la EC2 y GitHub listos, sigue la guía [docs/despliegue-aws.md](docs/despliegue-aws.md).
 
 `GET /actuator/health` es público y solo muestra el estado (`UP` o `DOWN`), sin detalles. El pipeline lo usa para saber si el deploy funcionó.
 

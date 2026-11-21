@@ -1,7 +1,9 @@
 name: CI/CD auth-service
 
-# develop: build, tests e imagen Docker (ambiente de pruebas)
-# main: lo mismo y ademas el deploy en la EC2 (produccion)
+# develop: build, tests e imagen Docker probada con MySQL (ambiente de pruebas)
+# main: lo mismo, y ademas publica la imagen en Amazon ECR, crea la cola SQS,
+#       la Lambda y el API Gateway con Serverless, despliega en el cluster
+#       Docker Swarm de la EC2 y corre la prueba e2e (produccion)
 on:
   push:
     branches: [main, develop]
@@ -33,13 +35,26 @@ jobs:
       - name: Compilar, correr los tests y empaquetar
         run: ./mvnw -B verify
 
+      - name: Compilar y probar la Lambda de alertas
+        run: ./mvnw -B -f lambda-alertas/pom.xml verify
+
       - name: Guardar reportes de tests
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: reportes-tests
-          path: target/surefire-reports/
+          path: |
+            target/surefire-reports/
+            lambda-alertas/target/surefire-reports/
           if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Guardar el jar de la Lambda
+        uses: actions/upload-artifact@v7
+        with:
+          name: lambda-alertas-jar
+          path: lambda-alertas/target/lambda-alertas.jar
+          if-no-files-found: error
           retention-days: 7
 
       - name: Guardar el jar
@@ -57,13 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Bajar el jar del build
-        uses: actions/download-artifact@v8
-        with:
-          name: auth-service-jar
-          path: target
-
-      # la imagen se construye y se prueba, pero no se publica en ningun registro
+      # la imagen se compila desde el codigo fuente (Dockerfile multi-etapa)
       - name: Construir la imagen y levantarla con MySQL
         run: bash deploy/desplegar.sh
 
@@ -75,6 +84,12 @@ jobs:
           echo "login admin: $codigo"
           test "$codigo" = "200"
 
+      - name: Revisar que la imagen no corra como root
+        run: |
+          usuario=$(docker inspect --format '{{.Config.User}}' auth-service:local)
+          echo "usuario de la imagen: $usuario"
+          test -n "$usuario" && test "$usuario" != "root"
+
       - name: Logs del contenedor
         if: failure()
         run: docker compose logs --tail 200
@@ -83,9 +98,114 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  deploy:
-    name: Deploy en AWS EC2
+  publicar:
+    name: Publicar imagen en Amazon ECR
     needs: docker
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      ECR_REPO: auth-service
+      INSTANCIA: ${{ vars.EC2_INSTANCE_NAME || 'auth-service' }}
+      WORKER: ${{ vars.EC2_WORKER_NAME || 'auth-service-worker' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configurar credenciales temporales de AWS Academy
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # repositorio ECR, reglas del security group y rol de las EC2; se crean solo si faltan
+      - name: Crear recursos de AWS
+        run: bash deploy/aws-recursos.sh
+
+      - name: Iniciar sesion en ECR
+        run: |
+          cuenta=$(aws sts get-caller-identity --query Account --output text)
+          registro="$cuenta.dkr.ecr.$AWS_REGION.amazonaws.com"
+          echo "IMAGEN=$registro/$ECR_REPO" >> "$GITHUB_ENV"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registro"
+
+      # cada version queda con el hash del commit, asi se puede volver a cualquiera
+      - name: Construir y subir la imagen
+        run: |
+          docker build -t "$IMAGEN:$GITHUB_SHA" -t "$IMAGEN:latest" .
+          docker push "$IMAGEN:$GITHUB_SHA"
+          docker push "$IMAGEN:latest"
+
+      - name: Cerrar sesion en ECR
+        if: always()
+        run: docker logout "${IMAGEN%%/*}" || true
+
+  serverless:
+    name: Cola SQS, Lambda y API Gateway (Serverless)
+    needs: docker
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      INSTANCIA: ${{ vars.EC2_INSTANCE_NAME || 'auth-service' }}
+      ETAPA: prod
+      SLS_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bajar el jar de la Lambda
+        uses: actions/download-artifact@v8
+        with:
+          name: lambda-alertas-jar
+          path: lambda-alertas/target
+
+      - name: Node 22 para Serverless Framework
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Configurar credenciales temporales de AWS Academy
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # el API Gateway reenvia a la IP publica (Elastic IP) del manager del Swarm
+      - name: Buscar la IP de auth-service
+        run: |
+          ip=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=$INSTANCIA" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[] | [0].PublicIpAddress' --output text)
+          if [ -z "$ip" ] || [ "$ip" = "None" ]; then
+              echo "::error::No hay una EC2 corriendo con el nombre '$INSTANCIA' (revisa que el Learner Lab este encendido)"
+              exit 1
+          fi
+          echo "auth-service en $ip"
+          echo "BACKEND=http://$ip:8081" >> "$GITHUB_ENV"
+
+      # crea o actualiza la cola, la DLQ, la Lambda, el tema SNS y el API Gateway
+      - name: Desplegar con Serverless
+        working-directory: lambda-alertas
+        env:
+          ALERTA_EMAIL: ${{ vars.ALERTA_EMAIL }}
+        run: |
+          parametros=(--param="backendUrl=$BACKEND")
+          if [ -n "$ALERTA_EMAIL" ]; then
+              parametros+=(--param="alertaEmail=$ALERTA_EMAIL")
+          fi
+          npx --yes serverless@3.38.0 deploy --stage "$ETAPA" "${parametros[@]}"
+
+      - name: Mostrar las salidas
+        run: |
+          aws cloudformation describe-stacks --stack-name "rl-auth-eventos-$ETAPA" \
+            --query 'Stacks[0].Outputs[].[OutputKey, OutputValue]' --output table | tee -a "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy en Docker Swarm (EC2)
+    needs: [publicar, serverless]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     environment:
@@ -96,16 +216,12 @@ jobs:
       cancel-in-progress: false
     env:
       AWS_REGION: us-east-1
+      ECR_REPO: auth-service
       INSTANCIA: ${{ vars.EC2_INSTANCE_NAME || 'auth-service' }}
+      WORKER: ${{ vars.EC2_WORKER_NAME || 'auth-service-worker' }}
       EC2_USER: ubuntu
     steps:
       - uses: actions/checkout@v7
-
-      - name: Bajar el jar del build
-        uses: actions/download-artifact@v8
-        with:
-          name: auth-service-jar
-          path: target
 
       - name: Configurar credenciales temporales de AWS Academy
         uses: aws-actions/configure-aws-credentials@v6
@@ -115,21 +231,44 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Buscar la EC2
+      # el manager es obligatorio; el worker es opcional y se suma si existe
+      - name: Buscar las EC2
         id: instancia
         run: |
-          datos=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=$INSTANCIA" "Name=instance-state-name,Values=running" \
-            --query 'Reservations[].Instances[] | [0].[InstanceId, PublicIpAddress]' --output text)
-          read -r id ip <<< "$datos"
+          buscar() {
+              aws ec2 describe-instances \
+                --filters "Name=tag:Name,Values=$1" "Name=instance-state-name,Values=running" \
+                --query 'Reservations[].Instances[] | [0].[InstanceId, PublicIpAddress, PrivateIpAddress]' --output text
+          }
+          read -r id ip privada <<< "$(buscar "$INSTANCIA")"
           if [ -z "$id" ] || [ "$id" = "None" ] || [ -z "$ip" ] || [ "$ip" = "None" ]; then
               echo "::error::No hay una EC2 corriendo con el nombre '$INSTANCIA' y una IP publica (revisa que el Learner Lab este encendido)"
               exit 1
           fi
-          echo "EC2 $id en $ip"
-          echo "EC2_ID=$id" >> "$GITHUB_ENV"
-          echo "EC2_HOST=$ip" >> "$GITHUB_ENV"
+          echo "manager $id en $ip (privada $privada)"
+          {
+              echo "EC2_ID=$id"
+              echo "EC2_HOST=$ip"
+              echo "EC2_PRIVADA=$privada"
+          } >> "$GITHUB_ENV"
           echo "url=http://$ip:8081/actuator/health" >> "$GITHUB_OUTPUT"
+
+          read -r wid wip _ <<< "$(buscar "$WORKER")"
+          if [ -n "$wid" ] && [ "$wid" != "None" ] && [ -n "$wip" ] && [ "$wip" != "None" ]; then
+              echo "worker $wid en $wip"
+              echo "WORKER_ID=$wid" >> "$GITHUB_ENV"
+              echo "WORKER_HOST=$wip" >> "$GITHUB_ENV"
+          else
+              echo "sin worker '$WORKER': el stack corre solo en el manager"
+          fi
+
+          cuenta=$(aws sts get-caller-identity --query Account --output text)
+          echo "REGISTRO=$cuenta.dkr.ecr.$AWS_REGION.amazonaws.com" >> "$GITHUB_ENV"
+
+          # la cola la creo el job de Serverless
+          cola=$(aws sqs get-queue-url --queue-name rl-auth-eventos-prod --query QueueUrl --output text)
+          echo "cola de eventos: $cola"
+          echo "COLA_URL=$cola" >> "$GITHUB_ENV"
 
       # llave SSH de un solo uso: EC2 Instance Connect la acepta por 60 segundos,
       # y la conexion maestra queda abierta para el resto de los pasos
@@ -137,9 +276,10 @@ jobs:
         run: |
           install -m 700 -d ~/.ssh
           ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/deploy
-          cat > ~/.ssh/config <<EOF
-          Host ec2
-            HostName $EC2_HOST
+          conectar() {
+              cat >> ~/.ssh/config <<EOF
+          Host $1
+            HostName $2
             User $EC2_USER
             IdentityFile ~/.ssh/deploy
             StrictHostKeyChecking accept-new
@@ -148,19 +288,25 @@ jobs:
             ControlPath ~/.ssh/cm-%C
             ControlPersist 15m
           EOF
-          aws ec2-instance-connect send-ssh-public-key \
-            --instance-id "$EC2_ID" --instance-os-user "$EC2_USER" \
-            --ssh-public-key file://$HOME/.ssh/deploy.pub > /dev/null
-          ssh -fN ec2
-          ssh ec2 'echo "conectado a $(hostname)"'
+              aws ec2-instance-connect send-ssh-public-key \
+                --instance-id "$3" --instance-os-user "$EC2_USER" \
+                --ssh-public-key "file://$HOME/.ssh/deploy.pub" > /dev/null
+              ssh -fN "$1"
+              ssh "$1" 'echo "conectado a $(hostname)"'
+          }
+          conectar ec2 "$EC2_HOST" "$EC2_ID"
+          if [ -n "${WORKER_ID:-}" ]; then
+              conectar worker "$WORKER_HOST" "$WORKER_ID"
+          fi
 
-      # las claves de MySQL y JWT se crean en la EC2 la primera vez y se mantienen
+      # las claves de MySQL, JWT y la API interna se generan en la EC2 la primera vez
+      # y de ahi salen los secretos del Swarm
       - name: Preparar la EC2
         env:
           SEED_DATA: ${{ vars.SEED_DATA || 'never' }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
-          ssh ec2 'rm -rf auth-service/target && mkdir -p auth-service/target auth-service/deploy'
+          ssh ec2 'mkdir -p auth-service/swarm'
           ssh ec2 'cd auth-service && if [ ! -f .env ]; then
               umask 077
               printf "DB_PASSWORD=%s\nJWT_SECRET=%s\nINTERNAL_API_KEY=%s\nSEED_DATA=never\n" \
@@ -174,18 +320,85 @@ jobs:
 
       - name: Copiar archivos a la EC2
         run: |
-          scp target/auth-service-*.jar ec2:auth-service/target/
-          scp Dockerfile .dockerignore docker-compose.yml ec2:auth-service/
-          scp deploy/desplegar.sh ec2:auth-service/deploy/
+          scp docker-stack.yml ec2:auth-service/
+          scp swarm/*.sh ec2:auth-service/swarm/
 
-      - name: Desplegar
-        run: ssh ec2 'bash auth-service/deploy/desplegar.sh'
+      # si la EC2 todavia tiene la version con Docker Compose, se baja antes de
+      # pasar a Swarm (el volumen de compose no se borra)
+      - name: Iniciar el cluster Swarm
+        run: |
+          ssh ec2 'cd auth-service && if [ -f docker-compose.yml ] && [ -n "$(docker compose ps -q 2> /dev/null)" ]; then
+              docker compose down
+          fi'
+          ssh ec2 "bash auth-service/swarm/init-manager.sh $EC2_PRIVADA"
+
+      - name: Sumar el worker al cluster
+        if: env.WORKER_ID != ''
+        run: |
+          # si el worker es una EC2 nueva, primero se le instala Docker
+          if ! ssh worker 'command -v docker' > /dev/null; then
+              scp deploy/preparar-ec2.sh worker:
+              ssh worker 'bash preparar-ec2.sh'
+          fi
+          scp swarm/unir-worker.sh worker:
+          token=$(ssh ec2 'docker swarm join-token -q worker')
+          echo "::add-mask::$token"
+          ssh worker "sudo bash unir-worker.sh $token $EC2_PRIVADA"
+
+      # el manager baja la imagen de ECR y le pasa el acceso a los workers (--with-registry-auth)
+      - name: Desplegar el stack
+        run: |
+          aws ecr get-login-password | ssh ec2 "docker login --username AWS --password-stdin $REGISTRO"
+          ssh ec2 "cd auth-service && set -a && . ./.env && set +a \
+              && AUTH_IMAGE=$REGISTRO/$ECR_REPO:$GITHUB_SHA EVENTOS_COLA_URL=$COLA_URL bash swarm/desplegar-stack.sh"
+
+      - name: Estado del cluster
+        if: always()
+        run: ssh ec2 'bash auth-service/swarm/estado.sh' || true
 
       - name: Verificar desde internet
-        run: curl -fsS --retry 10 --retry-delay 5 --retry-all-errors "http://$EC2_HOST:8081/actuator/health"
+        run: |
+          curl -fsS --retry 10 --retry-delay 5 --retry-all-errors "http://$EC2_HOST:8081/actuator/health"
+          echo
+          # con el routing mesh, el worker tambien responde en el 8081
+          if [ -n "${WORKER_HOST:-}" ]; then
+              curl -fsS --retry 5 --retry-delay 5 --retry-all-errors "http://$WORKER_HOST:8081/actuator/health" \
+                || echo "::warning::El worker no responde en el 8081 (revisa que tenga el mismo security group)"
+          fi
 
       - name: Cerrar la conexion
         if: always()
         run: |
+          ssh ec2 "docker logout $REGISTRO" > /dev/null 2>&1 || true
           ssh -O exit ec2 2> /dev/null || true
+          ssh -O exit worker 2> /dev/null || true
           rm -f ~/.ssh/deploy ~/.ssh/deploy.pub ~/.ssh/config
+
+  e2e:
+    name: Prueba e2e (API Gateway, Swarm, SQS y Lambda)
+    needs: deploy
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configurar credenciales temporales de AWS Academy
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Buscar la URL del API Gateway
+        run: |
+          url=$(aws cloudformation describe-stacks --stack-name rl-auth-eventos-prod \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)
+          echo "API Gateway: $url"
+          echo "API_URL=$url" >> "$GITHUB_ENV"
+
+      # registro, login, token, rutas protegidas, 3 logins fallidos y la alerta de la Lambda
+      - name: Probar de punta a punta
+        run: bash pruebas/e2e.sh "$API_URL"

@@ -35,3 +35,7 @@ build/
 ### Entorno ###
 .env
 *.log
+
+### Serverless Framework ###
+.serverless/
+node_modules/

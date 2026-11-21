@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Levanta auth-service y MySQL con Docker Compose y espera a que el servicio responda.
-# Lo ejecuta el pipeline en la EC2. En local sirve despues de ./mvnw clean package.
+# Lo usa el pipeline para probar la imagen antes de publicarla. Tambien sirve en local.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
