@@ -1,6 +1,6 @@
 # auth-service en Docker Swarm
 
-En producción auth-service corre en un cluster de Docker Swarm sobre EC2, con varias réplicas detrás del balanceo que trae Swarm. El stack está en `docker-stack.yml` y los scripts para manejarlo en la carpeta `swarm/`.
+Para esta entrega pasamos auth-service de Docker Compose a Docker Swarm. Así podemos tener varias copias (réplicas) del servicio repartidas en dos EC2, y Swarm se encarga de balancear entre ellas. El stack está en `docker-stack.yml`, y los scripts para manejarlo, en la carpeta `swarm/`.
 
 ## Cómo queda armado
 
@@ -35,7 +35,7 @@ En producción auth-service corre en un cluster de Docker Swarm sobre EC2, con v
 | `swarm/desplegar-stack.sh` | manager | Crea los secretos, despliega el stack y espera a que todas las réplicas estén sanas. Si Swarm hace rollback, termina con error |
 | `swarm/escalar.sh <n>` | manager | Cambia la cantidad de réplicas y muestra en qué nodo quedó cada una |
 | `swarm/estado.sh` | manager | Muestra los nodos, los servicios y las réplicas |
-| `deploy/aws-recursos.sh` | pipeline | Crea el repositorio ECR y abre los puertos del Swarm en el security group |
+| `deploy/aws-recursos.sh` | pipeline | Crea el repositorio ECR, abre los puertos del Swarm en el security group y le pone el rol `LabInstanceProfile` a las EC2 |
 
 El pipeline corre todo esto solo en cada push a `main`. Los pasos manuales de abajo sirven para entender qué hace o para probar a mano.
 
@@ -99,30 +99,30 @@ bash swarm/desplegar-stack.sh
 
 Para salir del modo Swarm: `docker stack rm auth` y `docker swarm leave --force`.
 
-## Por qué está configurado así
+## Por qué lo configuramos así
 
-**Varias réplicas (2 por defecto).** Si una réplica se cae o se está actualizando, la otra sigue atendiendo. auth-service no guarda sesión en memoria (el login entrega un JWT), así que cualquier réplica puede responder cualquier petición. Lo probamos registrando un usuario en una réplica y haciendo login en la otra.
+**2 réplicas.** Si una se cae o se está actualizando, la otra sigue atendiendo. Como el login entrega un JWT y auth-service no guarda sesiones en memoria, cualquier réplica puede atender cualquier petición. Para comprobarlo registramos un usuario en una réplica e hicimos login en la otra, y funcionó.
 
-**Routing mesh en el puerto 8081.** Swarm publica el puerto en todos los nodos y reparte las peticiones entre las réplicas sanas, estén en el nodo que estén. No hace falta un balanceador aparte.
+**Routing mesh en el 8081.** Swarm abre el puerto en todos los nodos y reparte las peticiones entre las réplicas que estén sanas, en el nodo que sea. Por eso no necesitamos un balanceador aparte.
 
-**Actualización sin caída (`order: start-first`).** En cada deploy Swarm levanta la réplica nueva, espera que el healthcheck pase y recién ahí baja la antigua, de a una (`parallelism: 1`). En una prueba con 400 peticiones durante una actualización no falló ninguna.
+**Actualizar sin cortar el servicio (`order: start-first`).** En cada deploy, Swarm primero levanta la réplica nueva, espera que pase el healthcheck y después baja la antigua, de a una. Lo probamos mandando 400 peticiones mientras se actualizaba, y no falló ninguna.
 
-**Rollback automático (`failure_action: rollback`, `monitor: 60s`).** Si la versión nueva no arranca o se cae en su primer minuto, Swarm vuelve sola a la anterior. `desplegar-stack.sh` lo detecta y hace fallar el pipeline. Lo probamos desplegando a propósito una versión que no podía conectarse a la base.
+**Rollback automático.** Si la versión nueva no arranca o se cae en el primer minuto, Swarm vuelve sola a la anterior (`failure_action: rollback`). El script `desplegar-stack.sh` se da cuenta y hace fallar el pipeline. Para probarlo subimos a propósito una versión que no podía conectarse a la base, y Swarm la revirtió.
 
-**Healthcheck en la imagen.** El `HEALTHCHECK` del Dockerfile consulta `/actuator/health`. Swarm lo usa para saber cuándo una réplica está lista y para reemplazarla si deja de responder (`restart_policy: any`).
+**Healthcheck.** El Dockerfile tiene un `HEALTHCHECK` que consulta `/actuator/health`. Con eso Swarm sabe cuándo una réplica está lista, y si deja de responder la reemplaza.
 
-**Secretos de Swarm en vez de variables.** Las claves de MySQL, JWT y la API interna quedan cifradas en el cluster y cada contenedor las ve como archivos en `/run/secrets`. No aparecen en `docker inspect` ni en el stack. Spring las lee como propiedades con `SPRING_CONFIG_IMPORT=optional:configtree:/run/secrets/`, sin cambiar el código. MySQL usa `MYSQL_ROOT_PASSWORD_FILE`.
+**Secretos de Swarm.** Las claves de MySQL, JWT y la clave interna no van como variables de entorno, sino como secretos. Swarm las guarda cifradas y cada contenedor las ve como archivos en `/run/secrets`. No hubo que cambiar el código: Spring las lee como propiedades con `SPRING_CONFIG_IMPORT=optional:configtree:/run/secrets/`. MySQL lee su clave con `MYSQL_ROOT_PASSWORD_FILE`.
 
-**Red overlay `backend`.** Conecta las réplicas con MySQL aunque estén en EC2 distintas. MySQL no publica puertos, así que solo se puede llegar a él desde dentro del cluster.
+**Red overlay.** La red `backend` conecta las réplicas con MySQL aunque estén en EC2 distintas. MySQL no publica ningún puerto, así que solo se puede llegar a la base desde dentro del cluster.
 
-**MySQL con una réplica, fija en el manager.** Una base no se puede replicar solo subiendo `replicas`. Se queda en el nodo con la etiqueta `rl.db=true`, que es donde está su volumen, para no perder los datos si Swarm la reinicia. Usa `endpoint_mode: dnsrr`: como es un solo contenedor, el nombre `mysql` apunta directo a él y no a una IP virtual.
+**MySQL con una sola réplica, fija en el manager.** Una base de datos no se replica solo subiendo `replicas`, porque cada copia tendría sus propios datos. Por eso la dejamos fija en el nodo con la etiqueta `rl.db=true`, que es donde está su volumen. Además le pusimos `endpoint_mode: dnsrr`. Al principio las réplicas no se podían conectar a MySQL, y con eso el nombre `mysql` apunta directo al contenedor y se arregló.
 
-**Límites de memoria y CPU.** Cada réplica tiene máximo 768 MB y 1 CPU, y reserva 384 MB. Así una réplica con problemas no deja sin memoria al resto, y Swarm no pone más réplicas en un nodo de las que caben. En la práctica cada réplica usa unos 255 MB. La JVM usa el 60% del límite del contenedor (`-XX:MaxRAMPercentage=60`).
+**Límites de memoria y CPU.** Cada réplica puede usar como máximo 768 MB y 1 CPU, y reserva 384 MB. Así, si una réplica se descontrola, no deja sin memoria a las demás, y Swarm no mete en un nodo más réplicas de las que caben. En la práctica cada una usa unos 255 MB.
 
-**La imagen en ECR con el hash del commit.** Cada versión queda identificada y se puede volver a cualquiera. ECR está en la misma cuenta de AWS, escanea la imagen al subirla y borra solo las antiguas (se guardan las últimas 10). El manager pasa el acceso a ECR a los workers con `--with-registry-auth`.
+**Imagen en ECR con el hash del commit.** Cada versión queda con su propio tag, así sabemos qué commit está corriendo y podemos volver a uno anterior. Elegimos ECR porque está en la misma cuenta de AWS, revisa vulnerabilidades al subir la imagen y borra solo las imágenes viejas (deja las últimas 10).
 
-## Lo que falta para un ambiente real
+## Lo que mejoraríamos
 
-- **Un solo manager.** Si el manager se cae, las réplicas siguen corriendo, pero no se puede desplegar ni reprogramar nada. En producción se usan 3 managers, para que el cluster siga funcionando si se pierde uno (Raft necesita mayoría).
-- **MySQL es un punto único de falla.** Si su nodo se cae, auth-service queda sin base. Lo correcto sería una base administrada como Amazon RDS con Multi-AZ.
-- **El acceso a ECR dura 12 horas.** Si después de ese tiempo Swarm tiene que mover una réplica a un nodo que no tiene la imagen, no podrá bajarla hasta el siguiente deploy. Con el rol `LabRole` asignado a las EC2 y el credential helper de ECR se resolvería.
+- **Un solo manager.** Si se cae el manager, las réplicas siguen funcionando, pero no se puede desplegar ni mover nada. Lo recomendado es tener 3 managers, para que el cluster siga funcionando aunque se pierda uno.
+- **MySQL es un punto único de falla.** Si se cae su nodo, auth-service se queda sin base. Lo mejor sería usar Amazon RDS con Multi-AZ.
+- **El login a ECR dura 12 horas.** Si después de ese tiempo Swarm tiene que mover una réplica a un nodo que no tiene la imagen, no la va a poder bajar hasta el siguiente deploy.
