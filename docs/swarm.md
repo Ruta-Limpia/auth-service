@@ -105,6 +105,8 @@ Para salir del modo Swarm: `docker stack rm auth` y `docker swarm leave --force`
 
 **Routing mesh en el 8081.** Swarm abre el puerto en todos los nodos y reparte las peticiones entre las réplicas que estén sanas, en el nodo que sea. Por eso no necesitamos un balanceador aparte.
 
+Algo que nos pasó en el primer deploy: el pipeline se quedó esperando porque el script revisaba `localhost:8081` en la EC2, y nunca respondía. Al revisar con `ipvsadm` vimos que el balanceo sí estaba funcionando, con las 2 réplicas. Desde Docker 29 el routing mesh no responde a `localhost` en la misma máquina, pero sí a la IP del nodo y desde internet. Cambiamos el script para que revise por la IP del nodo.
+
 **Actualizar sin cortar el servicio (`order: start-first`).** En cada deploy, Swarm primero levanta la réplica nueva, espera que pase el healthcheck y después baja la antigua, de a una. Lo probamos mandando 400 peticiones mientras se actualizaba, y no falló ninguna.
 
 **Rollback automático.** Si la versión nueva no arranca o se cae en el primer minuto, Swarm vuelve sola a la anterior (`failure_action: rollback`). El script `desplegar-stack.sh` se da cuenta y hace fallar el pipeline. Para probarlo subimos a propósito una versión que no podía conectarse a la base, y Swarm la revirtió.
@@ -125,4 +127,5 @@ Para salir del modo Swarm: `docker stack rm auth` y `docker swarm leave --force`
 
 - **Un solo manager.** Si se cae el manager, las réplicas siguen funcionando, pero no se puede desplegar ni mover nada. Lo recomendado es tener 3 managers, para que el cluster siga funcionando aunque se pierda uno.
 - **MySQL es un punto único de falla.** Si se cae su nodo, auth-service se queda sin base. Lo mejor sería usar Amazon RDS con Multi-AZ.
+- **Las tablas las crea Hibernate (`ddl-auto=update`).** La primera vez, con la base vacía, las 2 réplicas intentan crear las mismas tablas al mismo tiempo. Una lo logra y la otra deja una advertencia en el log (`Duplicate key name`), pero arranca igual. Lo correcto sería usar migraciones con Flyway, que bloquea la base mientras una sola réplica crea las tablas.
 - **El login a ECR dura 12 horas.** Si después de ese tiempo Swarm tiene que mover una réplica a un nodo que no tiene la imagen, no la va a poder bajar hasta el siguiente deploy.
